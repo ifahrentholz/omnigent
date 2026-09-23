@@ -155,6 +155,26 @@ GET /v1/sessions/{session_id}/resources/git/diff/{path}?base=&previous_path=
 `before` is `null` for files created by the branch, `after` is `null` for
 deleted files.
 
+```
+POST /v1/sessions/{session_id}/resources/git/merge
+{"strategy": "merge" | "squash", "message": "optional", "base": "optional"}
+
+200 OK
+{"merged": true, "branch": "omni/login-a1b2c3", "base": "main",
+ "commit": "9c1e…", "checkout": "/Users/alice/repo"}
+
+409 Conflict
+{"error": {"code": "merge_refused", "message": "…", "conflicts": ["app.py"]}}
+```
+
+Lands the branch checked out in the session's workspace on `base` (default:
+the session's `git_base_branch`), inside the checkout that has the base checked
+out. The task worktree must have no uncommitted or untracked changes, and the
+base checkout no uncommitted tracked changes. A conflicting merge is aborted,
+leaving both trees unchanged, and lists the conflicting files. `merge` keeps the
+task's commits behind a `--no-ff` merge commit; `squash` lands them as one
+commit.
+
 ## Sending Review Comments to Another Session
 
 `POST /v1/sessions/{session_id}/comments/send` formats review comments into a

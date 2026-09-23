@@ -41,6 +41,9 @@ def _init_repo(path: Path) -> None:
     path.mkdir()
     git = ["git", "-C", str(path), "-c", "user.name=e2e", "-c", "user.email=e2e@example.com"]
     subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+    # The host daemon runs with a temp HOME; landing a task commits there.
+    subprocess.run([*git, "config", "user.name", "e2e"], check=True)
+    subprocess.run([*git, "config", "user.email", "e2e@example.com"], check=True)
     (path / "README.md").write_text("hello\n")
     subprocess.run([*git, "add", "README.md"], check=True)
     subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)
@@ -280,6 +283,26 @@ def test_worker_subagent_runs_in_its_own_worktree(
         assert sent.status_code == 200, sent.text
         _wait_for_text(http_client, session_id, "Review comments on sub-agent")
         _wait_for_text(http_client, session_id, "Say goodbye too")
+
+        # Landing the task: commit the rest, then merge the branch into main
+        # in the orchestrator's checkout.
+        subprocess.run([*git, "add", "-A"], check=True)
+        subprocess.run([*git, "commit", "-q", "-m", "worker wrap-up"], check=True)
+        merged = http_client.post(
+            f"/v1/sessions/{child['id']}/resources/git/merge",
+            json={"strategy": "squash", "message": "Land login task"},
+            timeout=120.0,
+        )
+        assert merged.status_code == 200, merged.text
+        assert merged.json()["base"] == "main"
+        assert (repo / "new.txt").read_text() == "fresh\n"
+        head_subject = subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert head_subject == "Land login task"
 
         # Stopping the worker must not tear down the orchestrator's runner:
         # the child shares it, so the parent stays online afterwards.

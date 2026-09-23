@@ -13,6 +13,12 @@ import { useState } from "react";
 import { RunningDot } from "@/components/RunningDot";
 import { DIFF_SOURCE_PARAM, useBranchChanges } from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
+import {
+  LandError,
+  type LandStrategy,
+  useLandBranch,
+  useRequestPullRequest,
+} from "@/hooks/useLandBranch";
 import { Link, useLocation } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import { cn } from "@/lib/utils";
@@ -128,6 +134,7 @@ function WorktreeRow({ child, isActive }: { child: ChildSessionInfo; isActive: b
       </div>
       {expanded && (
         <div className="pb-2 pl-7 pr-2">
+          <LandActions sessionId={child.id} base={base ?? null} disabled={child.busy} />
           {unavailable ? (
             <p className="text-xs text-muted-foreground">{unavailable}</p>
           ) : changes.isError ? (
@@ -169,5 +176,103 @@ function WorktreeRow({ child, isActive }: { child: ChildSessionInfo; isActive: b
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * "Land" controls for one task: merge its branch into the base, or ask the
+ * worker to open a pull request instead.
+ */
+function LandActions({
+  sessionId,
+  base,
+  disabled,
+}: {
+  sessionId: string;
+  base: string | null;
+  disabled: boolean;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [strategy, setStrategy] = useState<LandStrategy>("merge");
+  const land = useLandBranch(sessionId);
+  const requestPr = useRequestPullRequest(sessionId);
+  const target = base ?? "base";
+
+  return (
+    <div className="mb-2 flex flex-col gap-1 text-xs">
+      <div className="flex flex-wrap items-center gap-1">
+        {confirming ? (
+          <>
+            <select
+              aria-label="Merge strategy"
+              value={strategy}
+              onChange={(event) => setStrategy(event.target.value as LandStrategy)}
+              className="rounded border border-border bg-transparent px-1 py-0.5"
+            >
+              <option value="merge">Merge commit</option>
+              <option value="squash">Squash</option>
+            </select>
+            <button
+              type="button"
+              disabled={land.isPending}
+              onClick={() => land.mutate({ strategy }, { onSettled: () => setConfirming(false) })}
+              className="rounded-full border border-border px-2 py-0.5 font-medium hover:bg-accent disabled:opacity-50"
+            >
+              {land.isPending ? "Landing…" : `Land into ${target}`}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-full px-2 py-0.5 text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled={disabled}
+              title={
+                disabled ? "Wait until the worker is idle" : `Merge this branch into ${target}`
+              }
+              onClick={() => {
+                land.reset();
+                setConfirming(true);
+              }}
+              className="rounded-full border border-border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+            >
+              Land…
+            </button>
+            <button
+              type="button"
+              disabled={requestPr.isPending || requestPr.isSuccess}
+              title="Ask the worker to push its branch and open a pull request"
+              onClick={() => requestPr.mutate()}
+              className="rounded-full border border-border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+            >
+              {requestPr.isSuccess ? "PR requested" : "Ask for PR"}
+            </button>
+          </>
+        )}
+      </div>
+      {land.isSuccess && (
+        <p className="text-success">
+          Landed into {land.data.base} ({land.data.commit.slice(0, 7)}).
+        </p>
+      )}
+      {land.isError && (
+        <div className="text-destructive">
+          <p>{land.error.message}</p>
+          {land.error instanceof LandError && land.error.conflicts.length > 0 && (
+            <ul className="ml-3 list-disc font-mono">
+              {land.error.conflicts.map((path) => (
+                <li key={path}>{path}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
