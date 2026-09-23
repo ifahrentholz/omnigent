@@ -252,6 +252,13 @@ def test_worker_subagent_runs_in_its_own_worktree(
         assert diff.json()["before"] == "hello\n"
         assert diff.json()["after"] == "hello\nfrom the worker\nuncommitted\n"
 
+        # The child's file panel reads its own worktree, not the parent repo.
+        content = http_client.get(
+            f"/v1/sessions/{child['id']}/resources/environments/default/filesystem/new.txt"
+        )
+        assert content.status_code == 200, content.text
+        assert "fresh" in json.dumps(content.json())
+
         # Stopping the worker must not tear down the orchestrator's runner:
         # the child shares it, so the parent stays online afterwards.
         runner_id = parent["runner_id"]
