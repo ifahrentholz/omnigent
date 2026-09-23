@@ -5820,6 +5820,18 @@
             "description": "Runtime-native session id this conversation wraps, e.g. a Claude Code session uuid for `omnigent claude` sessions. `None` for regular AP-only conversations. Lets the sidebar / picker render a runtime badge without a follow-up GET.",
             "title": "External Session Id"
           },
+          "git_base_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ref the created worktree branch forked from, e.g. `\"main\"`; the base for \"all changes of this task\" diffs. `None` when unknown or no worktree was created.",
+            "title": "Git Base Branch"
+          },
           "git_branch": {
             "anyOf": [
               {
@@ -6636,6 +6648,18 @@
             ],
             "description": "Runtime-native session id this conversation wraps, e.g. a Claude Code session uuid for `omnigent claude` sessions. `None` for regular AP-only conversations. Populated by the wrapper bridge.",
             "title": "External Session Id"
+          },
+          "git_base_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ref the created worktree branch forked from, e.g. `\"main\"`; the base for \"all changes of this task\" diffs. `None` when unknown or no worktree was created.",
+            "title": "Git Base Branch"
           },
           "git_branch": {
             "anyOf": [

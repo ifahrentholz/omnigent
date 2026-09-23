@@ -852,6 +852,7 @@ def create_hosts_router(
             harness = await _resolve_agent_harness(target.conv, agent_store, agent_cache)
 
         git_branch: str | None = None
+        git_base_branch: str | None = None
         worktree = None
 
         async def _rollback_worktree() -> None:
@@ -937,6 +938,7 @@ def create_hosts_router(
                         raise HTTPException(status_code=400, detail=exc.message) from exc
                     workspace = worktree.worktree_path
                     git_branch = worktree.branch
+                    git_base_branch = body.git.base_branch
 
             try:
                 await host_registry.admit_launch(
@@ -967,6 +969,7 @@ def create_hosts_router(
                     host_id,
                     workspace,
                     git_branch,
+                    git_base_branch,
                 )
             )
             try:

@@ -151,6 +151,32 @@ async def _is_git_work_tree(path: str) -> bool:
     return proc.returncode == 0 and stdout.strip() == b"true"
 
 
+async def _current_branch(path: str) -> str | None:
+    """
+    Read the branch checked out at ``path``, if any.
+
+    :param path: Absolute directory inside a git work tree.
+    :returns: The short branch name, or ``None`` when detached or unknown.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "-C",
+            path,
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_GIT_PROBE_TIMEOUT_S)
+    except (OSError, TimeoutError):
+        return None
+    branch = stdout.decode(errors="replace").strip()
+    return branch if proc.returncode == 0 and branch else None
+
+
 async def build_worktree_create_fields(
     *,
     mode: WorktreeMode,
@@ -163,8 +189,10 @@ async def build_worktree_create_fields(
     Build the create-body fields that make the server create a worktree.
 
     The branch forks from ``request.base_branch`` when given, else from the
-    parent's own worktree branch, else from the main checkout's ``HEAD``.
-    Uncommitted parent changes are not carried over.
+    parent's own worktree branch, else from the branch checked out in the
+    parent's workspace. Naming the base explicitly lets the server record it
+    for "changes vs base" diffs. Uncommitted parent changes are not carried
+    over.
 
     :param mode: Resolved worktree mode for this dispatch.
     :param request: The dispatch's worktree fields.
@@ -215,6 +243,8 @@ async def build_worktree_create_fields(
         parent_branch = parent.get("git_branch")
         if isinstance(parent_branch, str) and parent_branch:
             base_branch = parent_branch
+        else:
+            base_branch = await _current_branch(workspace)
     git: dict[str, object] = {"branch_name": branch_name}
     if base_branch is not None:
         git["base_branch"] = base_branch

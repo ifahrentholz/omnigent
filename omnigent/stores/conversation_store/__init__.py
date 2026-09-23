@@ -407,6 +407,7 @@ class ConversationStore(ABC):
         host_id: str | None = None,
         workspace: str | None = None,
         git_branch: str | None = None,
+        git_base_branch: str | None = None,
         terminal_launch_args: list[str] | None = None,
         conversation_id: str | None = None,
         project_id: str | None = None,
@@ -457,6 +458,8 @@ class ConversationStore(ABC):
             worktree, e.g. ``"feature/login"``. Set only when the
             session was created with a server-created worktree;
             ``None`` otherwise. See designs/SESSION_GIT_WORKTREE.md.
+        :param git_base_branch: Ref the created worktree branch forked
+            from, e.g. ``"main"``; ``None`` when unknown.
         :param terminal_launch_args: Optional pass-through CLI args
             for a native terminal wrapper (claude / codex), e.g.
             ``["--dangerously-skip-permissions"]``. ``None`` leaves
@@ -1455,7 +1458,8 @@ class ConversationStore(ABC):
     def clear_host_binding(self, conversation_id: str) -> Conversation:
         """
         Revert a session to fully unbound: NULL ``host_id``,
-        ``workspace``, ``git_branch``, and ``runner_id`` together.
+        ``workspace``, ``git_branch``, ``git_base_branch``, and
+        ``runner_id`` together.
 
         Used to undo a failed per-session bind (``POST
         /v1/hosts/{id}/runners``) after the runner was atomically
@@ -1513,6 +1517,7 @@ class ConversationStore(ABC):
         host_id: str,
         workspace: str | None = None,
         git_branch: str | None = None,
+        git_base_branch: str | None = None,
     ) -> Conversation:
         """
         Set the host that launched (or should launch) the runner.
@@ -1540,6 +1545,8 @@ class ConversationStore(ABC):
             when binding an existing session to a freshly created
             worktree (the fork resume path). ``None`` leaves it
             untouched.
+        :param git_base_branch: Optional ref that worktree branch forked
+            from, e.g. ``"main"``. ``None`` leaves it untouched.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             with ``conversation_id`` exists.
