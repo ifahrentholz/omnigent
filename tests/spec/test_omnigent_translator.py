@@ -449,6 +449,37 @@ def test_sub_agent_infers_harness_and_forwards_os_env() -> None:
     )
 
 
+def test_sub_agent_worktree_flag_round_trips() -> None:
+    """
+    The sub-agent ``worktree`` flag survives both translation directions,
+    so the runner's dispatch gate sees what the YAML declared.
+    """
+    sub_spec = AgentSpec(
+        spec_version=1,
+        name="coder",
+        instructions="You write code.",
+        llm=LLMConfig(model="databricks-claude-sonnet-4"),
+        executor=ExecutorSpec(type="omnigent", model="databricks-claude-sonnet-4", config={}),
+        worktree=True,
+    )
+    parent_spec = AgentSpec(
+        spec_version=1,
+        name="root",
+        instructions="You delegate.",
+        llm=LLMConfig(model="databricks-gpt-5-4"),
+        executor=ExecutorSpec(type="omnigent", model="databricks-gpt-5-4", config={}),
+        tools=ToolsConfig(agents=["coder"]),
+        sub_agents=[sub_spec],
+    )
+    agent_def = agent_spec_to_agent_def(parent_spec)
+    sub_tool = agent_def.tools["coder"]
+    assert isinstance(sub_tool, AgentTool)
+    assert sub_tool.worktree is True
+    round_tripped = agent_def_to_agent_spec(agent_def)
+    coder = next(sub for sub in round_tripped.sub_agents if sub.name == "coder")
+    assert coder.worktree is True
+
+
 # ── Client-runtime tool translation (forward + reverse) ────────────
 
 

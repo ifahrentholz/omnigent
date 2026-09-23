@@ -487,6 +487,7 @@ def _parse_tool(name: str, data: str | YamlData) -> Tool:
                 "pass_history",
                 "pass_histories",
                 "max_sessions",
+                "worktree",
             ):
                 if conflicting in data:
                     raise ValueError(
@@ -517,6 +518,9 @@ def _parse_tool(name: str, data: str | YamlData) -> Tool:
                     f"Tool '{name}': 'max_sessions' must be >= 1, got {raw_max_sessions!r}."
                 )
             max_sessions = raw_max_sessions
+        raw_worktree = data.get("worktree", False)
+        if not isinstance(raw_worktree, bool):
+            raise ValueError(f"Tool '{name}': 'worktree' must be a boolean, got {raw_worktree!r}.")
         return AgentTool(
             name=name,
             description=data.get("description"),
@@ -531,6 +535,7 @@ def _parse_tool(name: str, data: str | YamlData) -> Tool:
             pass_history=data.get("pass_history", False),
             pass_histories=data.get("pass_histories"),
             max_sessions=max_sessions,
+            worktree=raw_worktree,
         )
 
     if tool_type == "inherit":
