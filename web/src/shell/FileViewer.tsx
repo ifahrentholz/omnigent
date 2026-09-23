@@ -43,6 +43,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   FileDiffIcon,
+  GitCompareIcon,
   Link2Icon,
   ListIcon,
   Loader2Icon,
@@ -78,6 +79,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { downloadWorkspaceFile, useFileContent } from "@/hooks/useFileContent";
 import { useFileDiff } from "@/hooks/useFileDiff";
+import { DIFF_SOURCE_PARAM, useBranchChanges, useBranchFileDiff } from "@/hooks/useBranchDiff";
 import {
   type Comment,
   useAddComment,
@@ -391,16 +393,28 @@ function FileViewerBody({
   // (embedded in the desktop aside, never a fixed overlay).
   const keyboardInset = useIOSNativeKeyboardInset(!frameless && open);
   const fileQuery = useFileContent(conversationId, path);
-  const diffQuery = useFileDiff(conversationId, path);
+  // ?diffsrc=branch compares against the branch's fork point (commits +
+  // edits + new files) instead of HEAD; the Changes list sets it too.
+  const diffSource = searchParams.get(DIFF_SOURCE_PARAM) === "branch" ? "branch" : "head";
+  const headDiffQuery = useFileDiff(conversationId, diffSource === "head" ? path : null);
   const changedFiles = useWorkspaceChangedFiles(conversationId);
+  const branchChanges = useBranchChanges(conversationId, { enabled: diffSource === "branch" });
+  const branchEntry = branchChanges.data?.data.find((f) => f.path === path) ?? null;
+  const branchDiffQuery = useBranchFileDiff(
+    conversationId,
+    diffSource === "branch" && branchEntry ? path : null,
+    branchEntry?.previous_path ?? null,
+  );
+  const diffQuery = diffSource === "branch" ? branchDiffQuery : headDiffQuery;
+  const changedList = diffSource === "branch" ? branchChanges.data?.data : changedFiles.data?.data;
 
   // Build the navigable file list from all changed files (including deleted),
   // sorted the same way FilesPanel sorts its flat view so the "X/N" index
   // matches the Changes list position. Memoized so the sort runs only when the
   // changed-files list or sort order changes, not on every viewer re-render.
   const navigableFiles = useMemo(
-    () => [...(changedFiles.data?.data ?? [])].sort(compareChangedFiles(sort)).map((f) => f.path),
-    [changedFiles.data?.data, sort],
+    () => [...(changedList ?? [])].sort(compareChangedFiles(sort)).map((f) => f.path),
+    [changedList, sort],
   );
   const currentNavIdx = navigableFiles.indexOf(path);
   const prevPath = currentNavIdx > 0 ? navigableFiles[currentNavIdx - 1] : null;
@@ -682,12 +696,9 @@ function FileViewerBody({
   const isBinary = fileQuery.data?.encoding === "base64" || isBinaryPath(path);
   // Show Δ button only when the file appears in the session's changed-files list.
   const isDiffAvailable =
-    !isImage &&
-    !isPdf &&
-    !isModel &&
-    (changedFiles.data?.data.some((f) => f.path === path) ?? false);
+    !isImage && !isPdf && !isModel && (changedList?.some((f) => f.path === path) ?? false);
   const isDeletedFile =
-    changedFiles.data?.data.some((f) => f.path === path && f.status === "deleted") ?? false;
+    changedList?.some((f) => f.path === path && f.status === "deleted") ?? false;
 
   // Diff is a global toggle — turning it on/off on any file carries over as you
   // navigate to the next file. Source ↔ preview is also shared across previewable
@@ -1171,6 +1182,29 @@ function FileViewerBody({
     });
   }
   if (viewMode === "diff") {
+    settingsMenu.push({
+      key: "diff-source",
+      label:
+        diffSource === "branch"
+          ? "Compare with last commit"
+          : `Compare with ${branchChanges.data?.base ?? "base branch"}`,
+      tooltip:
+        diffSource === "branch"
+          ? "Show only uncommitted changes"
+          : "Show everything this branch changed since it forked",
+      icon: <GitCompareIcon className="size-4" />,
+      active: diffSource === "branch",
+      onSelect: () =>
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            if (diffSource === "branch") next.delete(DIFF_SOURCE_PARAM);
+            else next.set(DIFF_SOURCE_PARAM, "branch");
+            return next;
+          },
+          { replace: true },
+        ),
+    });
     settingsMenu.push({
       key: "wrap-lines",
       label: "Wrap lines",
