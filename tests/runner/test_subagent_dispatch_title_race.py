@@ -3,7 +3,9 @@
 Several sends in one model response dispatch concurrently. Two sends to the
 same ``(agent, title)`` used to both miss the find-existing lookup; the second
 create then hit the server's duplicate-title check and failed with a 409
-instead of addressing the child the first send just created.
+instead of addressing the child the first send just created. Now the second
+send finds that child and, while its first turn is launching, gets the
+standard retryable "still starting" answer.
 """
 
 from __future__ import annotations
@@ -87,5 +89,8 @@ async def test_concurrent_sends_to_one_title_create_one_child(
             runner_app._session_inboxes_ref.pop("conv_race_parent", None)
 
     assert len(creates) == 1, "the second send must find the first send's child"
-    assert not any("409" in output for output in outputs), outputs
     assert json.loads(outputs[0])["conversation_id"] == "conv_race_child"
+    # The child's first turn is still launching, so the second send gets the
+    # retryable answer for that child rather than a duplicate-title 409.
+    assert "still starting" in outputs[1], outputs[1]
+    assert "409" not in outputs[1]

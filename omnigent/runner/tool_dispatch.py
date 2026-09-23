@@ -2440,7 +2440,7 @@ def _subagent_launching_message(agent: str, title: object, task_id: str) -> str:
 
 # One lock per (parent, agent, title): concurrent named sends in one model
 # response would otherwise both miss the find-existing lookup and race to
-# create the same child; the loser got a hard 409 instead of continuing it.
+# create the same child; the loser got a hard 409 naming a duplicate title.
 _named_dispatch_locks: weakref.WeakValueDictionary[tuple[str, str, str], asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
@@ -2483,7 +2483,9 @@ async def _execute_subagent_tool(
 
     See :func:`_execute_subagent_tool_unlocked` for the dispatch contract.
     A second concurrent send to one ``(agent, title)`` waits for the first
-    to create the child, then continues it instead of racing the create.
+    to create the child and then addresses that child: while its first
+    turn is still launching it gets the standard transient "still starting
+    ... retry" answer instead of a duplicate-title 409.
 
     :param args: Parsed arguments from the LLM.
     :param server_client: httpx client pointed at the Omnigent server.
