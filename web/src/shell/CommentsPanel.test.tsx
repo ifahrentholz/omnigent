@@ -558,3 +558,54 @@ describe("CommentsPanel active-comment reveal", () => {
     expect(onClickComment).toHaveBeenCalledWith(addressed);
   });
 });
+
+describe("CommentsPanel send to orchestrator", () => {
+  it("offers a To orchestrator action only for sub-agent sessions", () => {
+    const onAddressAllToParent = vi.fn();
+    const comment = {
+      id: "c1",
+      session_id: "conv_child",
+      path: "src/a.ts",
+      start_index: 0,
+      end_index: 3,
+      body: "Rename this",
+      status: "draft",
+      anchor_content: "foo",
+      created_at: 1,
+      updated_at: 1,
+    } as unknown as Comment;
+    const { rerender } = render(
+      <CommentsPanel
+        comments={[comment]}
+        addressedComments={[]}
+        activeSelection={null}
+        onAddComment={vi.fn()}
+        onAddressAll={vi.fn()}
+        onEditComment={vi.fn()}
+        onDeleteComment={vi.fn()}
+        onClickComment={vi.fn()}
+        canAddress
+        addressPending={false}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "To orchestrator" })).not.toBeInTheDocument();
+
+    rerender(
+      <CommentsPanel
+        comments={[comment]}
+        addressedComments={[]}
+        activeSelection={null}
+        onAddComment={vi.fn()}
+        onAddressAll={vi.fn()}
+        onAddressAllToParent={onAddressAllToParent}
+        onEditComment={vi.fn()}
+        onDeleteComment={vi.fn()}
+        onClickComment={vi.fn()}
+        canAddress
+        addressPending={false}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "To orchestrator" }));
+    expect(onAddressAllToParent).toHaveBeenCalledTimes(1);
+  });
+});

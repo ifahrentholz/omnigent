@@ -10,11 +10,12 @@ import asyncio
 from dataclasses import asdict
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, model_validator
 
 from omnigent.db.enum_codecs import COMMENT_STATUS
-from omnigent.entities import Comment
+from omnigent.entities import Comment, Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_EDIT, LEVEL_READ, AuthProvider
 from omnigent.server.routes._auth_helpers import (
@@ -53,6 +54,72 @@ def _format_message(comments: list[Comment]) -> str:
             lines.append(f"• {anchor}(offset {c.start_index}–{c.end_index}): {c.body}")
 
     return "\n".join(lines)
+
+
+def _format_for_target(comments: list[Comment], source: Conversation, *, to_self: bool) -> str:
+    """Format comments for delivery, naming the worktree they belong to.
+
+    Sent to an ancestor (the orchestrator), the message identifies the
+    reviewed sub-agent so it can route the comments with
+    ``sys_session_send`` or handle them itself.
+
+    :param comments: The comments to deliver.
+    :param source: The session the comments were made on.
+    :param to_self: Whether the target is ``source`` itself.
+    :returns: The message text.
+    """
+    body = _format_message(comments)
+    if to_self:
+        return body
+    label = source.title or source.id
+    where = [f"session {source.id}"]
+    if source.git_branch:
+        branch = source.git_branch
+        if source.git_base_branch:
+            branch += f" → {source.git_base_branch}"
+        where.append(f"branch {branch}")
+    if source.workspace:
+        where.append(f"worktree {source.workspace}")
+    header = (
+        f"Review comments on sub-agent {label!r} ({', '.join(where)}). Route them to "
+        f'that sub-agent with sys_session_send(session_id="{source.id}", ...) or '
+        "address them yourself."
+    )
+    return f"{header}\n\n{body}"
+
+
+# Request headers that carry the caller's identity to the in-process event POST.
+_FORWARDED_HEADERS = ("authorization", "cookie", "x-forwarded-email", "origin")
+
+
+async def _deliver_message(request: Request, session_id: str, text: str) -> None:
+    """Post ``text`` as the caller's user message into ``session_id``.
+
+    Goes through the regular ``POST /v1/sessions/{id}/events`` route in
+    process, so delivery gets the same authorization, runner wake-up and
+    queueing as a message typed into that session.
+
+    :param request: The originating request; its identity headers are reused.
+    :param session_id: Target session, e.g. the orchestrator.
+    :param text: Message text.
+    :raises OmnigentError: When the target rejects the message.
+    """
+    headers = {name: value for name in _FORWARDED_HEADERS if (value := request.headers.get(name))}
+    event = {
+        "type": "message",
+        "data": {"role": "user", "content": [{"type": "input_text", "text": text}]},
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=request.app),
+        base_url="http://omnigent.internal",
+        headers=headers,
+    ) as client:
+        resp = await client.post(f"/v1/sessions/{session_id}/events", json=event, timeout=60.0)
+    if resp.status_code >= 400:
+        raise OmnigentError(
+            f"Delivering comments to {session_id} failed: {resp.status_code} {resp.text[:200]}",
+            code=ErrorCode.CONFLICT if resp.status_code == 409 else ErrorCode.INVALID_INPUT,
+        )
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -111,10 +178,17 @@ class SendCommentsRequest(BaseModel):
     :param instruction: Optional custom instruction prefix; defaults
         to the standard "Please address the following file review
         comments." header.
+    :param target_session_id: When set, the server delivers the message
+        itself into this session — the comments' own session or one of
+        its ancestors (e.g. the orchestrator of a worktree sub-agent) —
+        and marks the comments addressed only after delivery succeeds.
+        ``None`` keeps the legacy flow: the client posts the returned
+        ``formatted_message``.
     """
 
     comment_ids: list[str]
     instruction: str | None = None
+    target_session_id: str | None = None
 
 
 # ── Router factory ─────────────────────────────────────────────────────────────
@@ -367,6 +441,9 @@ def create_comments_router(
         user_id = get_user_id(request, auth_provider)
         await _require_session_access(user_id, session_id, LEVEL_EDIT)
 
+        if body.target_session_id is not None:
+            return await _send_to_target(request, user_id, session_id, body)
+
         # Fetch + mark-addressed for every requested comment runs N sync
         # DB gets + N sync updates. Do the whole batch in one worker-thread
         # hop so it never blocks the single-worker event loop (and can't
@@ -389,6 +466,68 @@ def create_comments_router(
         return {
             "formatted_message": formatted,
             "sent_comment_ids": [c.id for c in to_send],
+        }
+
+    async def _send_to_target(
+        request: Request,
+        user_id: str | None,
+        session_id: str,
+        body: SendCommentsRequest,
+    ) -> dict[str, Any]:
+        """Deliver comments into the session itself or an ancestor, server-side.
+
+        :param request: The incoming request (identity for delivery).
+        :param user_id: Authenticated caller.
+        :param session_id: Session that owns the comments.
+        :param body: The send request; ``target_session_id`` is set.
+        :returns: The legacy response plus ``delivered_to``.
+        :raises OmnigentError: 400 for a target outside the session's
+            ancestry, 404 for unknown comments, or a delivery failure.
+        """
+        from omnigent.server.routes._sessions.helpers import _ancestor_session_ids
+
+        target = body.target_session_id
+        assert target is not None
+        if conversation_store is None:
+            raise OmnigentError(
+                "comment delivery needs a conversation store", code=ErrorCode.INTERNAL_ERROR
+            )
+        source = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        if source is None:
+            raise session_not_found()
+        if target != session_id:
+            ancestors = await asyncio.to_thread(
+                _ancestor_session_ids, conversation_store, session_id
+            )
+            if target not in ancestors:
+                raise OmnigentError(
+                    "target_session_id must be this session or one of its ancestors",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            await _require_session_access(user_id, target, LEVEL_EDIT)
+
+        def _fetch() -> list[Comment]:
+            fetched: list[Comment] = []
+            for cid in body.comment_ids:
+                comment = store.get(cid, session_id)
+                if comment is None:
+                    raise OmnigentError(f"Comment not found: {cid}", code=ErrorCode.NOT_FOUND)
+                fetched.append(comment)
+            return fetched
+
+        comments = await asyncio.to_thread(_fetch)
+        message = _format_for_target(comments, source, to_self=target == session_id)
+        await _deliver_message(request, target, message)
+
+        def _mark() -> None:
+            for comment in comments:
+                store.update_comment(comment.id, session_id, status="addressed")
+
+        await asyncio.to_thread(_mark)
+        return {
+            "formatted_message": message,
+            "sent_comment_ids": [c.id for c in comments],
+            "delivered_to": target,
         }
 
     return router
