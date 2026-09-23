@@ -46,6 +46,8 @@ export interface BranchChangesResult {
   base: string | null;
   /** Commit the branch forked from. */
   mergeBase: string | null;
+  /** True once every change of the branch is on its base (merged or squashed). */
+  landed: boolean;
   data: BranchChangedFile[];
 }
 
@@ -58,6 +60,7 @@ export interface BranchFileDiff {
 interface BranchChangesWire {
   base?: string;
   merge_base?: string;
+  landed?: boolean;
   data: {
     path: string;
     name: string;
@@ -99,6 +102,7 @@ export async function fetchBranchChanges(
       reason: await errorMessage(res),
       base: null,
       mergeBase: null,
+      landed: false,
       data: [],
     };
   }
@@ -110,6 +114,7 @@ export async function fetchBranchChanges(
     reason: null,
     base: json.base ?? null,
     mergeBase: json.merge_base ?? null,
+    landed: json.landed ?? false,
     data: json.data.map((entry) => ({
       path: entry.path,
       name: entry.name,

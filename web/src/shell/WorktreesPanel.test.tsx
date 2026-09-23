@@ -7,7 +7,7 @@ import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { LandError, useLandBranch, useRequestPullRequest } from "@/hooks/useLandBranch";
 import type * as LandBranchModule from "@/hooks/useLandBranch";
-import { WorktreesPanel } from "./WorktreesPanel";
+import { WorktreesPanel, taskStage } from "./WorktreesPanel";
 
 vi.mock("@/hooks/useBranchDiff", async (importOriginal) => ({
   ...(await importOriginal<typeof BranchDiffModule>()),
@@ -241,5 +241,55 @@ describe("findOverlaps", () => {
     expect(overlaps.get("a")).toEqual(new Map([["x.ts", ["billing", "docs"]]]));
     expect(overlaps.get("c")).toEqual(new Map([["x.ts", ["login", "billing"]]]));
     expect(findOverlaps([{ id: "a", title: "solo", paths: ["x.ts", "x.ts"] }]).size).toBe(0);
+  });
+});
+
+describe("task board", () => {
+  it("groups tasks by stage, most urgent first", () => {
+    vi.mocked(useBranchChanges).mockImplementation((id: string | undefined) => {
+      const files = id === "conv_idle" ? [] : [{ path: `${id}.ts`, added: 1, removed: 0 }];
+      const result = branchResult(files);
+      if (id === "conv_landed" && result.data) result.data.landed = true;
+      return result;
+    });
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[
+            child({ id: "conv_landed", session_name: "landed", git_branch: "omni/l" }),
+            child({ id: "conv_review", session_name: "review", git_branch: "omni/r" }),
+            child({ id: "conv_run", session_name: "run", git_branch: "omni/x", busy: true }),
+            child({
+              id: "conv_ask",
+              session_name: "ask",
+              git_branch: "omni/a",
+              pending_elicitations_count: 1,
+            }),
+            child({ id: "conv_idle", session_name: "idle", git_branch: "omni/i" }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    const order = [...document.querySelectorAll('[data-testid^="worktree-stage-"]')].map((el) =>
+      el.getAttribute("data-testid"),
+    );
+    expect(order).toEqual([
+      "worktree-stage-input",
+      "worktree-stage-running",
+      "worktree-stage-review",
+      "worktree-stage-landed",
+      "worktree-stage-idle",
+    ]);
+    const landed = screen.getByTestId("worktree-stage-landed");
+    expect(landed.querySelector('[data-child-session-id="conv_landed"]')).not.toBeNull();
+  });
+
+  it("puts a waiting approval above a running turn", () => {
+    expect(
+      taskStage(child({ busy: true, pending_elicitations_count: 2 }), { landed: false, data: [] }),
+    ).toBe("input");
+    expect(taskStage(child({}), undefined)).toBe("idle");
   });
 });
