@@ -61,6 +61,7 @@ from omnigent.models.model_override import (
     validate_model_override,
 )
 from omnigent.native.native_coding_agents import public_agent_name
+from omnigent.runner.subagent_cap import claim_slot, release_slot
 from omnigent.runner.subagent_worktree import (
     build_worktree_create_fields,
     resolve_worktree_mode,
@@ -2482,6 +2483,36 @@ _named_dispatch_locks: weakref.WeakValueDictionary[tuple[str, str, str], asyncio
 )
 
 
+def _claim_running_slot(
+    agent_spec: AgentSpec | None,
+    conversation_id: str,
+    token: str,
+    *,
+    exclude_child: str | None,
+    claims: list[tuple[str, str]] | None,
+) -> str | None:
+    """
+    Enforce the parent's ``max_running_subagents`` for one dispatch.
+
+    :param agent_spec: The parent spec; no cap when it sets none.
+    :param conversation_id: The parent session id.
+    :param token: Unique id for this dispatch.
+    :param exclude_child: Child this dispatch continues, if any.
+    :param claims: Collects the claim so the caller releases it on return.
+    :returns: ``None`` to proceed, else the refusal message.
+    """
+    cap = getattr(agent_spec, "max_running_subagents", None)
+    if not isinstance(cap, int) or cap < 1:
+        return None
+    error = claim_slot(conversation_id, cap, token, exclude_child=exclude_child)
+    if error is None:
+        if claims is not None:
+            claims.append((conversation_id, token))
+        else:
+            release_slot(conversation_id, token)
+    return error
+
+
 def _named_dispatch_lock(args: _JsonObject, conversation_id: str | None) -> asyncio.Lock | None:
     """
     Return the lock serializing named sends to one ``(agent, title)``.
@@ -2531,6 +2562,7 @@ async def _execute_subagent_tool(
     :param session_inbox: Parent session's inbox queue.
     :returns: JSON child-session handle, or an error string.
     """
+    claims: list[tuple[str, str]] = []
 
     async def _dispatch() -> str:
         return await _execute_subagent_tool_unlocked(
@@ -2540,13 +2572,18 @@ async def _execute_subagent_tool(
             agent_spec=agent_spec,
             publish_event=publish_event,
             session_inbox=session_inbox,
+            cap_claims=claims,
         )
 
     lock = _named_dispatch_lock(args, conversation_id)
-    if lock is None:
-        return await _dispatch()
-    async with lock:
-        return await _dispatch()
+    try:
+        if lock is None:
+            return await _dispatch()
+        async with lock:
+            return await _dispatch()
+    finally:
+        for parent_id, token in claims:
+            release_slot(parent_id, token)
 
 
 async def _execute_subagent_tool_unlocked(
@@ -2557,6 +2594,7 @@ async def _execute_subagent_tool_unlocked(
     agent_spec: AgentSpec | None = None,
     publish_event: Callable[[str, _JsonObject], None] | None = None,
     session_inbox: asyncio.Queue[_JsonObject] | None = None,
+    cap_claims: list[tuple[str, str]] | None = None,
 ) -> str:
     """
     Dispatch a sub-agent tool call (``sys_session_send``).
@@ -2674,6 +2712,15 @@ async def _execute_subagent_tool_unlocked(
                 "existing session. Re-send without 'cost_budget' to continue "
                 f"session {target_session_id!r}."
             )
+        cap_error = _claim_running_slot(
+            agent_spec,
+            conversation_id,
+            uuid.uuid4().hex,
+            exclude_child=target_session_id,
+            claims=cap_claims,
+        )
+        if cap_error is not None:
+            return cap_error
         dispatch_created_by = await _session_turn_actor(
             server_client=server_client,
             conversation_id=conversation_id,
@@ -2741,10 +2788,25 @@ async def _execute_subagent_tool_unlocked(
         if isinstance(existing, str):
             return existing
     assert not isinstance(existing, str)
+    from omnigent.tools.builtins.web_fetch import RESEARCHER_NAME
+
+    work_id = _runner_app.new_subagent_work_id()
+    existing_id = existing.get("id") if existing is not None else None
+    # web_fetch's internal researcher is a tool call, not an orchestrator
+    # dispatch, so it neither takes nor is refused a slot.
+    if sub_agent_name != RESEARCHER_NAME:
+        cap_error = _claim_running_slot(
+            agent_spec,
+            conversation_id,
+            work_id,
+            exclude_child=existing_id if isinstance(existing_id, str) else None,
+            claims=cap_claims,
+        )
+        if cap_error is not None:
+            return cap_error
     created_child = False
     child_worktree: dict[str, object] = {}
     child_wrapper_label: str | None = None
-    work_id = _runner_app.new_subagent_work_id()
     if existing is not None:
         child_session_id = existing.get("id")
         if not isinstance(child_session_id, str) or not child_session_id:
