@@ -11471,6 +11471,45 @@ def create_runner_app(
             previous_path=previous_path,
         )
 
+    @app.post("/v1/sessions/{session_id}/resources/git/merge")
+    async def merge_branch_into_base(session_id: str, request: Request) -> JSONResponse:
+        from omnigent.runner.branch_merge import BranchMergeError, merge_task_branch
+
+        body = await request.json()
+        await _require_os_env(session_id)
+        cwd = await _session_runtime_cwd(session_id)
+        if cwd is None:
+            raise HTTPException(status_code=404, detail="Session has no workspace.")
+        try:
+            result = await asyncio.to_thread(
+                merge_task_branch,
+                str(cwd),
+                str(body.get("base") or ""),
+                strategy="squash" if body.get("strategy") == "squash" else "merge",
+                message=body.get("message") or None,
+            )
+        except BranchMergeError as exc:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": {
+                        "code": "merge_refused",
+                        "message": str(exc),
+                        "conflicts": exc.conflicts,
+                    }
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "merged": True,
+                "branch": result.branch,
+                "base": result.base,
+                "commit": result.commit,
+                "checkout": result.checkout,
+            },
+        )
+
     @app.get("/v1/sessions/{session_id}/resources/github")
     async def read_github_info(session_id: str, pr_url: str | None = None) -> JSONResponse:
         return await _github_call(session_id, "github_info", pr_url=pr_url)
