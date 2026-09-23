@@ -110,7 +110,7 @@ def test_modified_base_checkout_is_refused(task: tuple[Path, Path]) -> None:
     """Someone's edits in the base checkout are never mixed into a merge."""
     main, worktree = task
     (main / "app.py").write_text("a = 99\n")
-    with pytest.raises(BranchMergeError, match="'main' checkout .* has uncommitted changes"):
+    with pytest.raises(BranchMergeError, match=r"'main' checkout .* has uncommitted changes"):
         merge_task_branch(str(worktree), "main")
 
 
