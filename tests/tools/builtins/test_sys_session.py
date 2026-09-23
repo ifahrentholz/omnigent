@@ -196,6 +196,8 @@ def test_send_schema_advertises_plain_string_and_purpose_object_args() -> None:
         "model",
         "reasoning_effort",
         "file_ids",
+        "worktree",
+        "base_branch",
         "cost_budget",
     }
     assert "dispatch metadata" in object_schema["properties"]["purpose"]["description"]
@@ -238,6 +240,8 @@ def test_send_schema_gates_harness_field_behind_allowlist_opt_in() -> None:
         "model",
         "reasoning_effort",
         "file_ids",
+        "worktree",
+        "base_branch",
         "cost_budget",
     }
 
@@ -264,6 +268,8 @@ def test_send_schema_gates_harness_field_behind_allowlist_opt_in() -> None:
         "reasoning_effort",
         "file_ids",
         "harness",
+        "worktree",
+        "base_branch",
         "cost_budget",
     }
     object_schema = next(
@@ -291,6 +297,8 @@ def test_send_schema_gates_harness_field_behind_allowlist_opt_in() -> None:
         "reasoning_effort",
         "file_ids",
         "harness",
+        "worktree",
+        "base_branch",
         "cost_budget",
     }
 
