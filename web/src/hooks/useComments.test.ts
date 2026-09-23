@@ -323,3 +323,15 @@ describe("useSendCommentsToAgent", () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 });
+
+describe("lineRange", () => {
+  it("maps character offsets to 1-based inclusive lines", async () => {
+    const { lineRange } = await import("./useComments");
+    const text = "one\ntwo\nthree\nfour\n";
+    expect(lineRange(text, 0, 3)).toEqual({ start_line: 1, end_line: 1 });
+    expect(lineRange(text, 4, 13)).toEqual({ start_line: 2, end_line: 3 });
+    // A selection ending right after a newline stays on its last real line.
+    expect(lineRange(text, 4, 8)).toEqual({ start_line: 2, end_line: 2 });
+    expect(lineRange(text, 9, 9)).toEqual({ start_line: 3, end_line: 3 });
+  });
+});
