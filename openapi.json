@@ -601,6 +601,30 @@
             "description": "Status of the latest task, e.g. `\"completed\"`, `\"in_progress\"`, `\"failed\"`. `None` if no tasks exist.",
             "title": "Current Task Status"
           },
+          "git_base_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ref that worktree branch forked from, e.g. `\"main\"`; `None` when unknown.",
+            "title": "Git Base Branch"
+          },
+          "git_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Branch of the child's server-created worktree, e.g. `\"omni/login-a1b2c3\"`; `None` without one.",
+            "title": "Git Branch"
+          },
           "id": {
             "description": "Child conversation/session identifier, e.g. `\"conv_child123\"`.",
             "title": "Id",
@@ -741,6 +765,18 @@
             "format": "int64",
             "title": "Updated At",
             "type": "integer"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The child's working directory, e.g. its git worktree path. `None` when it runs in the parent's workspace.",
+            "title": "Workspace"
           }
         },
         "required": [
