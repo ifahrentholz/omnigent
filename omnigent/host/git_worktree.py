@@ -545,6 +545,18 @@ def create_worktree(
             except WorktreeError:
                 _logger.warning("Could not roll back worktree %s", worktree_path, exc_info=True)
             raise
+    # Lazy: worktree_setup imports WorktreeError from this module.
+    from omnigent.host.worktree_setup import apply_worktree_setup
+
+    try:
+        apply_worktree_setup(Path(repo_root), worktree_path)
+    except WorktreeError:
+        # Never hand out a half-prepared worktree: drop it (and a branch this
+        # call created) so the session create fails cleanly.
+        _run_git(["worktree", "remove", "--force", str(worktree_path)], cwd=repo_root)
+        if not existing_branch:
+            _run_git(["branch", "-D", "--end-of-options", branch_name], cwd=repo_root)
+        raise
     return CreatedWorktree(
         worktree_path=str(worktree_path),
         branch=branch_name,
