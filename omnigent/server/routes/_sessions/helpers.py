@@ -9300,6 +9300,33 @@ def _worktree_host_id(conv: Any, conversation_store: Any) -> str | None:
     return None
 
 
+def _descendant_worktrees(conversation_store: Any, session_id: str) -> list[Any]:
+    """
+    List every descendant session that has a server-created worktree.
+
+    :param conversation_store: Store used to walk the sub-agent tree.
+    :param session_id: Root of the subtree, e.g. an orchestrator.
+    :returns: Descendant :class:`Conversation` rows with ``git_branch`` and
+        ``workspace`` set, nearest first.
+    """
+    found: list[Any] = []
+    frontier = [session_id]
+    seen = {session_id}
+    while frontier:
+        children = conversation_store.list_child_conversation_ids_by_parent(frontier)
+        frontier = []
+        for child_ids in children.values():
+            for child_id in child_ids:
+                if child_id in seen:
+                    continue
+                seen.add(child_id)
+                frontier.append(child_id)
+                child = conversation_store.get_conversation(child_id)
+                if child is not None and child.git_branch and child.workspace:
+                    found.append(child)
+    return found
+
+
 async def _remove_session_worktree_best_effort(
     *,
     host_id: str,
@@ -11362,6 +11389,7 @@ __all__ = [
     "_delete_stored_session_bundle_after_failure",
     "_derive_terminal_launch_args_from_spec",
     "_descendant_sessions",
+    "_descendant_worktrees",
     "_devin_subagent_display_tool",
     "_devin_subagent_labels_from_body",
     "_discovery_key",

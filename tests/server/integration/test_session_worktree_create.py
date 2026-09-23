@@ -536,3 +536,39 @@ async def test_sub_agent_child_gets_its_own_worktree(
     assert deleted.status_code in (200, 204), deleted.text
     assert [frame.worktree_path for frame in cap.remove] == [child["workspace"]]
     assert cap.remove[0].branch == "omni/login-abc123"
+
+
+async def test_deleting_an_orchestrator_removes_its_workers_worktrees(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+) -> None:
+    """Deleting the parent with ``delete_branch`` also removes the worktrees
+    of its sub-agents, whose rows the store deletes with it — otherwise
+    those worktrees and branches are orphaned on the host.
+    """
+    cap = register_worktree_host()
+    agent = await create_test_agent(client, name="wt-cascade", sub_agents=[{"name": "worker"}])
+    parent = (
+        await _create_git_session(client, agent["id"], {"branch_name": "feature/orch"})
+    ).json()
+    child_resp = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "parent_session_id": parent["id"],
+            "title": "worker:task",
+            "sub_agent_name": "worker",
+            "host_id": _HOST_ID,
+            "workspace": parent["workspace"],
+            "git": {"branch_name": "omni/task-abc123", "base_branch": "feature/orch"},
+        },
+    )
+    assert child_resp.status_code == 201, child_resp.text
+    child = child_resp.json()
+
+    deleted = await client.delete(f"/v1/sessions/{parent['id']}", params={"delete_branch": "true"})
+    assert deleted.status_code in (200, 204), deleted.text
+
+    removed = {(frame.worktree_path, frame.branch, frame.delete_branch) for frame in cap.remove}
+    assert (child["workspace"], "omni/task-abc123", True) in removed
+    assert (parent["workspace"], "feature/orch", True) in removed
