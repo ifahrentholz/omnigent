@@ -105,6 +105,56 @@ Cancels all in-flight responses for this agent before deleting.
 
 ---
 
+## Task Branch Changes
+
+Review everything a session's branch changed since it forked from its base:
+committed, uncommitted and untracked changes against
+`merge-base(base, HEAD)`. The environment `changes` endpoint only covers the
+working tree against `HEAD`, so a worker's commits disappear from it.
+
+```
+GET /v1/sessions/{session_id}/resources/git/changes
+
+Query parameters:
+  base (string, optional)
+    Base branch, e.g. "main". Defaults to the session's `git_base_branch`,
+    then the repository's default branch (origin/HEAD, main, master). The
+    local branch wins over origin/<base>.
+
+200 OK
+{
+  "object": "list",
+  "base": "main",
+  "merge_base": "3f2a…",
+  "has_more": false,
+  "data": [
+    {"object": "session.environment.filesystem.entry", "path": "app.py",
+     "name": "app.py", "status": "modified", "previous_path": null,
+     "bytes": 812, "modified_at": 1774118382,
+     "lines_added": 3, "lines_removed": 1}
+  ]
+}
+
+400 Bad Request — not a git repository, or the base has no common history
+503 Service Unavailable — runner offline and no host can serve the read
+```
+
+`status` is one of `created`, `modified`, `deleted`, `renamed`; renames carry
+`previous_path`. When the runner is offline, the session's host (for a
+sub-agent: its nearest host-bound ancestor's host) serves the same payload.
+
+```
+GET /v1/sessions/{session_id}/resources/git/diff/{path}?base=&previous_path=
+
+200 OK
+{"object": "session.environment.filesystem.file_diff", "path": "app.py",
+ "previous_path": null, "before": "<content at merge-base>",
+ "after": "<content on disk>", "base": "main", "merge_base": "3f2a…"}
+```
+
+`before` is `null` for files created by the branch, `after` is `null` for
+deleted files.
+
 ## Session File Resources
 
 Upload files that can be referenced by `file_id` in `input_image` and `input_file`
