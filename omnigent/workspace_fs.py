@@ -516,6 +516,34 @@ class WorkspaceReader:
             "after": after,
         }
 
+    # ── Task-branch diff (read-only) ──────────────────────────────
+    # Same payloads as the runner's ``/resources/git/*`` routes.
+
+    def branch_changes(self, base: str | None) -> _WorkspacePayload:
+        """Files changed since the branch forked from ``base``."""
+        from omnigent.runner.branch_diff import BranchDiffError, branch_changes
+
+        try:
+            return cast("_WorkspacePayload", branch_changes(str(self._root), base=base))
+        except BranchDiffError as exc:
+            raise WorkspaceReaderError(400, "invalid_base", str(exc)) from exc
+
+    def branch_diff(
+        self, relative_path: str, base: str | None, previous_path: str | None = None
+    ) -> _WorkspacePayload:
+        """One file at the merge-base and in the working tree."""
+        from omnigent.runner.branch_diff import BranchDiffError, branch_file_diff
+
+        try:
+            return cast(
+                "_WorkspacePayload",
+                branch_file_diff(
+                    str(self._root), relative_path, base=base, previous_path=previous_path
+                ),
+            )
+        except BranchDiffError as exc:
+            raise WorkspaceReaderError(400, "invalid_base", str(exc)) from exc
+
     # ── GitHub integration (read-only) ────────────────────────────
     # Serve the same read-only PR metadata + the PR's files / diff the runner's
     # GitHub endpoints do, so the tab keeps working when the runner is offline
