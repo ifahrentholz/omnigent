@@ -39,6 +39,8 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useBranchChanges, useDiffSource } from "@/hooks/useBranchDiff";
+import { DiffSourceToggle } from "./DiffSourceToggle";
 import { type ChangedSort, FlatFileList } from "./FlatFileList";
 import { FolderTree } from "./FolderTree";
 import { useScrollRestore } from "./useScrollRestore";
@@ -287,6 +289,16 @@ export function FilesPanel({
   const changedQuery = useWorkspaceChangedFiles(conversationId, {
     enabled: true,
   });
+  // "vs <base>" lists everything the branch changed since it forked, so a
+  // worker's commits stay visible; the viewer follows the same ?diffsrc=.
+  const [diffSource, setDiffSource] = useDiffSource();
+  const branchQuery = useBranchChanges(conversationId, {
+    enabled: flatView && diffSource === "branch",
+  });
+  const branchMode = diffSource === "branch";
+  const listQuery = branchMode ? branchQuery : changedQuery;
+  const branchUnavailable =
+    branchQuery.data && !branchQuery.data.available ? branchQuery.data.reason : null;
   const envQuery = useWorkspaceEnvironment(conversationId, {
     enabled: true,
   });
@@ -548,6 +560,12 @@ export function FilesPanel({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex min-w-0 flex-1 items-center gap-[2px]">
+            <DiffSourceToggle
+              source={diffSource}
+              onChange={setDiffSource}
+              base={branchQuery.data?.base ?? null}
+              branchUnavailableReason={branchUnavailable}
+            />
             <div className="flex min-w-0 flex-1 items-center gap-[6px] rounded-lg border border-border px-[10px] py-[4px] transition-colors focus-within:border-border-strong">
               <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
               <input
@@ -647,12 +665,16 @@ export function FilesPanel({
         )}
         onScroll={handleScroll}
       >
-        {flatView ? (
+        {flatView && branchMode && branchUnavailable ? (
+          <p className="px-2 py-3 text-sm text-muted-foreground">
+            Branch comparison unavailable: {branchUnavailable}
+          </p>
+        ) : flatView ? (
           <FlatFileList
-            files={changedQuery.data?.data}
-            isLoading={changedQuery.isLoading}
-            isError={changedQuery.isError}
-            error={changedQuery.error}
+            files={listQuery.data?.data}
+            isLoading={listQuery.isLoading}
+            isError={listQuery.isError}
+            error={listQuery.error}
             onFileSelect={onFileSelect}
             showHidden={showHidden}
             onShowHidden={() => onShowHiddenChange(true)}

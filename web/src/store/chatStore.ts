@@ -1664,6 +1664,13 @@ function scheduleWorkspaceFilesystemInvalidation(sessionId: string): void {
     queryClient?.invalidateQueries({
       queryKey: ["workspace-changed-files", sessionId],
     });
+    // Task-branch review list + diffs (Changes "vs base", Worktrees tab).
+    queryClient?.invalidateQueries({
+      queryKey: ["workspace-branch-changes", sessionId],
+    });
+    queryClient?.invalidateQueries({
+      queryKey: ["branch-file-diff", sessionId],
+    });
     queryClient?.invalidateQueries({
       queryKey: ["workspace-all-files", sessionId],
     });
