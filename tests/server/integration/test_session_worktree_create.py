@@ -223,6 +223,10 @@ async def test_create_passes_branch_and_base_branch_to_host(
     body = resp.json()
     assert body["git_branch"] == "feature/login"
     assert body["workspace"] == f"{_SOURCE_REPO}-worktrees/feature-login"
+    # The base is persisted so clients can diff the task against it.
+    assert body["git_base_branch"] == "main"
+    fetched = (await client.get(f"/v1/sessions/{body['id']}")).json()
+    assert fetched["git_base_branch"] == "main"
 
 
 async def test_create_without_base_branch_sends_none(
@@ -244,6 +248,7 @@ async def test_create_without_base_branch_sends_none(
     assert len(cap.create) == 1
     assert cap.create[0].branch_name == "wip"
     assert cap.create[0].base_branch is None
+    assert resp.json()["git_base_branch"] is None
 
 
 async def test_create_with_invalid_base_branch_fails_400(
@@ -513,6 +518,7 @@ async def test_sub_agent_child_gets_its_own_worktree(
     assert frame.branch_name == "omni/login-abc123"
     assert frame.base_branch == "feature/root"
     assert child["git_branch"] == "omni/login-abc123"
+    assert child["git_base_branch"] == "feature/root"
     assert child["workspace"] != parent["workspace"]
     assert child["workspace"].endswith("omni-login-abc123")
     # The child runs on the parent's runner: it must not own the host, or

@@ -40,7 +40,7 @@ def git_repo(tmp_path: Path) -> Path:
     """
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
     return repo
 
 
@@ -338,7 +338,9 @@ async def test_send_with_worktree_requests_server_worktree(
     assert body["host_id"] == "host_1"
     assert body["workspace"] == str(git_repo)
     assert body["git"]["branch_name"].startswith("omni/login-")
-    assert "base_branch" not in body["git"]
+    # The parent's checked-out branch is named explicitly so the server
+    # records it as the child's diff base.
+    assert body["git"]["base_branch"] == "main"
 
 
 @pytest.mark.asyncio
@@ -607,3 +609,27 @@ async def test_name_clash_still_bumps_the_ordinal(
     assert len(bodies) == 2
     assert bodies[0]["title"] != bodies[1]["title"]
     assert bodies[0]["git"]["branch_name"] != bodies[1]["git"]["branch_name"]
+
+
+@pytest.mark.asyncio
+async def test_detached_parent_head_leaves_base_unset(git_repo: Path) -> None:
+    """
+    A detached parent HEAD has no branch to name, so the server branches
+    from ``HEAD`` and no base is recorded.
+
+    :param git_repo: Initialized repository fixture.
+    """
+    git = ["git", "-C", str(git_repo), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+    subprocess.run([*git, "checkout", "-q", "--detach"], check=True)
+    parent = {"host_id": "host_1", "workspace": str(git_repo)}
+    async with _server(parent) as client:
+        fields = await build_worktree_create_fields(
+            mode="auto",
+            request=WorktreeArgs(),
+            server_client=client,
+            parent_session_id="conv_parent",
+            branch_name="omni/worker-1-abc123",
+        )
+    assert isinstance(fields, dict)
+    assert fields["git"] == {"branch_name": "omni/worker-1-abc123"}

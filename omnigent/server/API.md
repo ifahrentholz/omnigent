@@ -489,6 +489,12 @@ Fields:
     cleanup option on session delete. See
     `designs/SESSION_GIT_WORKTREE.md`.
 
+  git_base_branch (string or null)
+    Ref the server-created worktree branch forked from, e.g. `"main"`
+    (the create request's `git.base_branch`). Clients diff a task's
+    changes against it. `null` when no base was named (the branch
+    forked from the repo's `HEAD`) or no worktree was created.
+
   items (array, default `[]`)
     Committed conversation items in chronological order: user
     messages, assistant messages, function calls, function-call
