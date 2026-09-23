@@ -3861,8 +3861,9 @@ class SqlAlchemyConversationStore(ConversationStore):
             together with ``host_id``/``workspace`` when binding an
             existing session to a freshly created worktree (the fork
             resume path). ``None`` (default) leaves it untouched.
-        :param git_base_branch: Optional ref that worktree branch forked
-            from, e.g. ``"main"``. ``None`` (default) leaves it untouched.
+        :param git_base_branch: Ref that worktree branch forked from, e.g.
+            ``"main"``. Written together with ``git_branch`` (``None``
+            clears it); ignored when ``git_branch`` is ``None``.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             exists for ``conversation_id``.
@@ -3883,7 +3884,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 meta.workspace = workspace
             if git_branch is not None:
                 meta.git_branch = git_branch
-            if git_base_branch is not None:
+                # The base describes that branch, so a rebind to a new
+                # branch replaces it (including clearing a stale one).
                 meta.git_base_branch = git_base_branch
             return meta
 

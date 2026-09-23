@@ -1545,8 +1545,9 @@ class ConversationStore(ABC):
             when binding an existing session to a freshly created
             worktree (the fork resume path). ``None`` leaves it
             untouched.
-        :param git_base_branch: Optional ref that worktree branch forked
-            from, e.g. ``"main"``. ``None`` leaves it untouched.
+        :param git_base_branch: Ref that worktree branch forked from, e.g.
+            ``"main"``. Written together with ``git_branch`` (``None``
+            clears it); ignored when ``git_branch`` is ``None``.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             with ``conversation_id`` exists.
