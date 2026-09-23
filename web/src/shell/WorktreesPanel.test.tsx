@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useBranchChanges } from "@/hooks/useBranchDiff";
+import { findOverlaps, useBranchChanges, useBranchChangesForSessions } from "@/hooks/useBranchDiff";
 import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import { LandError, useLandBranch, useRequestPullRequest } from "@/hooks/useLandBranch";
@@ -12,6 +12,7 @@ import { WorktreesPanel } from "./WorktreesPanel";
 vi.mock("@/hooks/useBranchDiff", async (importOriginal) => ({
   ...(await importOriginal<typeof BranchDiffModule>()),
   useBranchChanges: vi.fn(),
+  useBranchChangesForSessions: vi.fn(),
 }));
 
 vi.mock("@/hooks/useLandBranch", async (importOriginal) => ({
@@ -34,6 +35,13 @@ function mutation(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  // Default: the panel-level overlap scan sees what each row sees.
+  vi.mocked(useBranchChangesForSessions).mockImplementation(
+    (ids: string[]) =>
+      ids.map((id) => vi.mocked(useBranchChanges)(id)) as unknown as ReturnType<
+        typeof useBranchChangesForSessions
+      >,
+  );
   vi.mocked(useLandBranch).mockReturnValue(
     mutation() as unknown as ReturnType<typeof useLandBranch>,
   );
@@ -189,5 +197,49 @@ describe("WorktreesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
     expect(screen.getByText("merging conflicts; nothing was changed")).toBeTruthy();
     expect(screen.getByText("src/app.py")).toBeTruthy();
+  });
+
+  it("flags files that another parallel task changes too", () => {
+    vi.mocked(useBranchChanges).mockImplementation(
+      (id: string | undefined) =>
+        (id === "conv_a"
+          ? branchResult([
+              { path: "src/shared.ts", added: 1, removed: 0 },
+              { path: "src/only_a.ts", added: 1, removed: 0 },
+            ])
+          : branchResult([{ path: "src/shared.ts", added: 2, removed: 1 }])) as ReturnType<
+          typeof useBranchChanges
+        >,
+    );
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[
+            child({ id: "conv_a", session_name: "login", git_branch: "omni/login-1" }),
+            child({ id: "conv_b", session_name: "billing", git_branch: "omni/billing-2" }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    const badges = screen.getAllByTestId("worktree-overlap");
+    expect(badges).toHaveLength(2);
+    expect(badges[0].getAttribute("title")).toContain("billing");
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    expect(screen.getAllByLabelText("changed by another task too")).toHaveLength(1);
+  });
+});
+
+describe("findOverlaps", () => {
+  it("maps each task's shared paths to the other tasks' titles", () => {
+    const overlaps = findOverlaps([
+      { id: "a", title: "login", paths: ["x.ts", "y.ts"] },
+      { id: "b", title: "billing", paths: ["x.ts"] },
+      { id: "c", title: "docs", paths: ["x.ts", "z.md"] },
+    ]);
+    expect(overlaps.get("a")).toEqual(new Map([["x.ts", ["billing", "docs"]]]));
+    expect(overlaps.get("c")).toEqual(new Map([["x.ts", ["login", "billing"]]]));
+    expect(findOverlaps([{ id: "a", title: "solo", paths: ["x.ts", "x.ts"] }]).size).toBe(0);
   });
 });

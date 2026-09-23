@@ -7,11 +7,16 @@
 // the file in its branch diff (`?file=…&diff=1&diffsrc=branch`), where the
 // regular comment layer annotates that worktree.
 
-import { ChevronDownIcon, ChevronRightIcon, GitBranchIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
 import { RunningDot } from "@/components/RunningDot";
-import { DIFF_SOURCE_PARAM, useBranchChanges } from "@/hooks/useBranchDiff";
+import {
+  DIFF_SOURCE_PARAM,
+  findOverlaps,
+  useBranchChanges,
+  useBranchChangesForSessions,
+} from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import {
   LandError,
@@ -47,8 +52,22 @@ function branchDiffSearch(search: string, path?: string): string {
  * @param props See {@link WorktreesPanelProps}.
  * @returns The worktree list, or an explanatory empty state.
  */
+/** Display title of a worktree task. */
+function taskTitle(child: ChildSessionInfo): string {
+  return child.task_summary || child.session_name || child.title || child.id;
+}
+
 export function WorktreesPanel({ conversationId, sessions }: WorktreesPanelProps) {
   const worktrees = sessions.filter((child) => child.git_branch);
+  // Files touched by several parallel tasks will conflict when they land.
+  const branchLists = useBranchChangesForSessions(worktrees.map((child) => child.id));
+  const overlaps = findOverlaps(
+    worktrees.map((child, index) => ({
+      id: child.id,
+      title: taskTitle(child),
+      paths: branchLists[index]?.data?.data.map((file) => file.path) ?? [],
+    })),
+  );
   if (worktrees.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
@@ -60,20 +79,35 @@ export function WorktreesPanel({ conversationId, sessions }: WorktreesPanelProps
   return (
     <ul aria-label="Worktrees" className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
       {worktrees.map((child) => (
-        <WorktreeRow key={child.id} child={child} isActive={child.id === conversationId} />
+        <WorktreeRow
+          key={child.id}
+          child={child}
+          isActive={child.id === conversationId}
+          overlaps={overlaps.get(child.id)}
+        />
       ))}
     </ul>
   );
 }
 
-function WorktreeRow({ child, isActive }: { child: ChildSessionInfo; isActive: boolean }) {
+function WorktreeRow({
+  child,
+  isActive,
+  overlaps,
+}: {
+  child: ChildSessionInfo;
+  isActive: boolean;
+  /** Path -> other tasks changing it too; absent when nothing overlaps. */
+  overlaps?: Map<string, string[]>;
+}) {
   const [expanded, setExpanded] = useState(false);
   const location = useLocation();
   const changes = useBranchChanges(child.id);
   const files = changes.data?.data ?? [];
   const added = files.reduce((sum, file) => sum + (file.lines_added ?? 0), 0);
   const removed = files.reduce((sum, file) => sum + (file.lines_removed ?? 0), 0);
-  const title = child.task_summary || child.session_name || child.title || child.id;
+  const title = taskTitle(child);
+  const sharedWith = overlaps ? [...new Set([...overlaps.values()].flat())].sort().join(", ") : "";
   const base = changes.data?.base ?? child.git_base_branch;
   const unavailable = changes.data && !changes.data.available ? changes.data.reason : null;
 
@@ -126,6 +160,16 @@ function WorktreeRow({ child, isActive }: { child: ChildSessionInfo; isActive: b
                 → <span className="font-mono">{base}</span>
               </span>
             )}
+            {overlaps && (
+              <span
+                data-testid="worktree-overlap"
+                className="flex shrink-0 items-center gap-0.5 text-warning"
+                title={`Also changed by ${sharedWith}; landing both may conflict`}
+              >
+                <TriangleAlertIcon aria-hidden="true" className="size-3" />
+                {overlaps.size} shared
+              </span>
+            )}
             <span className="ml-auto shrink-0">
               {files.length} file{files.length === 1 ? "" : "s"}
             </span>
@@ -154,8 +198,20 @@ function WorktreeRow({ child, isActive }: { child: ChildSessionInfo; isActive: b
                     }}
                     data-testid="worktree-file"
                     className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-accent"
-                    title={file.renamed ? `${file.previous_path} → ${file.path}` : file.path}
+                    title={
+                      overlaps?.has(file.path)
+                        ? `Also changed by ${overlaps.get(file.path)?.join(", ")}`
+                        : file.renamed
+                          ? `${file.previous_path} → ${file.path}`
+                          : file.path
+                    }
                   >
+                    {overlaps?.has(file.path) && (
+                      <TriangleAlertIcon
+                        aria-label="changed by another task too"
+                        className="size-3 shrink-0 text-warning"
+                      />
+                    )}
                     <span
                       className={cn(
                         "min-w-0 flex-1 truncate font-mono",
