@@ -155,6 +155,29 @@ GET /v1/sessions/{session_id}/resources/git/diff/{path}?base=&previous_path=
 `before` is `null` for files created by the branch, `after` is `null` for
 deleted files.
 
+## Sending Review Comments to Another Session
+
+`POST /v1/sessions/{session_id}/comments/send` formats review comments into a
+message. Without `target_session_id` the client posts that message itself
+(legacy flow). With it, the server delivers the message into the target session
+itself: either the comments' own session, or one of its ancestors, such as the
+orchestrator of a worktree sub-agent. The comments are marked addressed only
+after the delivery succeeds.
+
+```
+POST /v1/sessions/{session_id}/comments/send
+{"comment_ids": ["cmt_1"], "target_session_id": "conv_orchestrator"}
+
+200 OK
+{"formatted_message": "Review comments on sub-agent 'worker:login' (session …,
+  branch omni/login-a1b2c3 → main, worktree …). Route them to that sub-agent
+  with sys_session_send(session_id=\"…\", ...) or address them yourself. …",
+ "sent_comment_ids": ["cmt_1"], "delivered_to": "conv_orchestrator"}
+
+400 Bad Request — target is not this session or one of its ancestors
+409 Conflict / 400 — the target rejected the message (comments stay draft)
+```
+
 ## Session File Resources
 
 Upload files that can be referenced by `file_id` in `input_image` and `input_file`
