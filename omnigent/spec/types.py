@@ -1472,6 +1472,9 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
         in its own git worktree (skipped when the parent workspace is not
         a git repo on a bound host). A dispatch's ``worktree`` argument
         overrides it.
+    :param max_running_subagents: Cap on this agent's sub-agent
+        dispatches running at once; a dispatch beyond it is refused
+        until one finishes. ``None`` means unlimited.
     :param executor: Executor configuration (type, task timeout,
         max iterations). ``executor.type`` is the
         discriminator for the entire spec's validity.
@@ -1603,6 +1606,7 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     pass_histories: list[str] | None = None
     max_sessions: int | None = None
     worktree: bool = False
+    max_running_subagents: int | None = None
     executor: ExecutorSpec = field(default_factory=ExecutorSpec)
     compaction: CompactionConfig | None = None
     guardrails: GuardrailsSpec | None = None
