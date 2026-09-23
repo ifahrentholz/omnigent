@@ -11593,6 +11593,45 @@ def create_runner_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(status_code=200, content=result)
 
+    # ── Task-branch diff: everything the branch changed since its base ──
+    # See omnigent.runner.branch_diff; git shells out, so run it in a thread.
+
+    async def _branch_diff_call(session_id: str, operation: str, **kwargs: Any) -> JSONResponse:
+        from omnigent.runner import branch_diff
+
+        # The session's own workspace (a sub-agent's worktree), not the
+        # runner's: children share the parent's runner.
+        await _require_os_env(session_id)
+        cwd = await _session_runtime_cwd(session_id)
+        if cwd is None:
+            raise HTTPException(status_code=404, detail="Session has no workspace.")
+        root = str(cwd)
+        function = getattr(branch_diff, operation)
+        try:
+            result = await asyncio.to_thread(function, root, session_id=session_id, **kwargs)
+        except branch_diff.BranchDiffError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(status_code=200, content=result)
+
+    @app.get("/v1/sessions/{session_id}/resources/git/changes")
+    async def read_branch_changes(session_id: str, base: str | None = None) -> JSONResponse:
+        return await _branch_diff_call(session_id, "branch_changes", base=base)
+
+    @app.get("/v1/sessions/{session_id}/resources/git/diff/{relative_path:path}")
+    async def read_branch_file_diff(
+        session_id: str,
+        relative_path: str,
+        base: str | None = None,
+        previous_path: str | None = None,
+    ) -> JSONResponse:
+        return await _branch_diff_call(
+            session_id,
+            "branch_file_diff",
+            relative_path=relative_path,
+            base=base,
+            previous_path=previous_path,
+        )
+
     @app.get("/v1/sessions/{session_id}/resources/github")
     async def read_github_info(session_id: str, pr_url: str | None = None) -> JSONResponse:
         return await _github_call(session_id, "github_info", pr_url=pr_url)

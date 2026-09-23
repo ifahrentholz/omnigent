@@ -14608,6 +14608,65 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/resources/git/changes": {
+      "get": {
+        "description": "List every file the session's branch changed since it forked.\n\nUnlike `.../environments/{id}/changes` (working tree vs `HEAD`),\nthis spans committed, uncommitted and untracked changes since\n`merge-base(base, HEAD)` \u2014 the full review view of a task\nworktree. `base` defaults to the session's `git_base_branch`,\nthen to the repository's default branch.\n\n**Returns:** Changed-file entries plus `base` and `merge_base`.",
+        "operationId": "list_branch_changes_v1_sessions__session_id__resources_git_changes_get",
+        "parameters": [
+          {
+            "description": "Session/conversation identifier.",
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional base branch, e.g. `\"main\"`.",
+            "in": "query",
+            "name": "base",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Base"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Branch Changes",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/resources/github": {
       "get": {
         "description": "Return GitHub context (repo, branch, base ref, PR) for a session.\n\nProxies to the runner, which shells out to `gh`/`git` in the\nworkspace. Returns an `available: false` payload (200) when `gh` is\nmissing or the workspace is not a git repo.\n\n**Returns:** The `session.github.info` object.",
