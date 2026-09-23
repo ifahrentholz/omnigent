@@ -195,6 +195,7 @@ from omnigent.server.routes._sessions.helpers import (
     _stop_session_via_runner,
     _stream_live_events,
     _wait_for_runner_client,
+    _worktree_host_id,
     reconcile_orphaned_running_status,
     require_filesystem_attachment_runtime,
 )
@@ -2711,14 +2712,19 @@ def register_events_routes(
         # unreachable host fails the delete (409) with the session
         # retained, so nothing irrecoverable may be destroyed first.
         # Git errors on a reachable host stay best-effort.
+        worktree_host_id = (
+            await asyncio.to_thread(_worktree_host_id, conv, conversation_store)
+            if delete_branch and conv.git_branch is not None
+            else None
+        )
         if (
             delete_branch
             and conv.git_branch is not None
             and conv.workspace is not None
-            and conv.host_id is not None
+            and worktree_host_id is not None
         ):
             await _remove_session_worktree_best_effort(
-                host_id=conv.host_id,
+                host_id=worktree_host_id,
                 worktree_path=conv.workspace,
                 branch=conv.git_branch,
                 delete_branch=True,

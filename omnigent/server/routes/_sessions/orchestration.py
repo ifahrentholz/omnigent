@@ -8917,6 +8917,23 @@ async def _resolve_native_smart_routing(
     return native_agent.agent_name, model, verdict, None
 
 
+def _session_owned_host_id(body: Any) -> str | None:
+    """
+    Return the host a newly created session binds to as its own.
+
+    A child session may name a ``host_id`` only so the server can create
+    its git worktree there; it still runs on the parent's runner. Binding
+    the host to the child would make stop/archive/delete tear down the
+    parent's runner or managed sandbox, so children never own a host.
+
+    :param body: The session-create request.
+    :returns: ``body.host_id`` for top-level sessions, else ``None``.
+    """
+    if getattr(body, "parent_session_id", None) is not None:
+        return None
+    return getattr(body, "host_id", None)
+
+
 async def _create_session_from_existing_agent(
     conversation_store: ConversationStore,
     agent_store: AgentStore,
@@ -9474,7 +9491,7 @@ async def _create_session_from_existing_agent(
             runner_id=inherited_runner_id,
             kind="sub_agent" if body.parent_session_id else "default",
             sub_agent_name=body.sub_agent_name,
-            host_id=body.host_id,
+            host_id=_session_owned_host_id(body),
             workspace=canonical_workspace,
             git_branch=git_branch,
             terminal_launch_args=validated_launch_args,
@@ -9587,7 +9604,7 @@ async def _create_session_from_existing_agent(
         conv.labels.update(_merged)
     elif (
         body.sub_agent_name is None
-        and body.host_id is not None
+        and _session_owned_host_id(body) is not None
         and (
             _repl_labels := _repl_terminal_ui_labels(
                 agent=agent,
@@ -11210,6 +11227,7 @@ __all__ = [
     "_run_managed_wake",
     "_runner_reject_detail",
     "_schedule_deferred_elicitation_clear",
+    "_session_owned_host_id",
     "_spawn_archive_stop",
     "_spawn_gateway_backed",
     "_spawn_native_approval_popup_forward",

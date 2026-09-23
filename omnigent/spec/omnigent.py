@@ -446,6 +446,7 @@ def _sub_spec_to_agent_tool(sub: AgentSpec) -> AgentTool:
         pass_history=sub.pass_history,
         pass_histories=(list(sub.pass_histories) if sub.pass_histories is not None else None),
         max_sessions=sub.max_sessions,
+        worktree=sub.worktree,
         executor=OmniExecutorSpec(
             model=model,
             harness=harness,
@@ -1423,6 +1424,7 @@ def _agent_tool_to_sub_spec(
         pass_history=tool.pass_history,
         pass_histories=(list(tool.pass_histories) if tool.pass_histories is not None else None),
         max_sessions=tool.max_sessions,
+        worktree=tool.worktree,
         terminals=sub_terminals,
         sub_agents=child_sub_agents,
         local_tools=child_local_tools,

@@ -533,6 +533,39 @@ tools:
 Use `tools.<name>: inherit` to inherit a tool from a parent agent, or
 `tools.<name>: self` / `spec: self` for a sub-agent that clones the parent spec.
 
+### Worktree isolation for sub-agents
+
+Parallel sub-agents normally share the orchestrator's workspace. Set
+`worktree: true` on a sub-agent (on the inline tool, or top-level in a
+sub-agent directory's `config.yaml`) to run each new session it starts in its
+own git worktree on a fresh `omni/<title>-<id>` branch:
+
+```yaml
+tools:
+  coder:
+    type: agent
+    executor:
+      harness: claude-native
+    worktree: true
+```
+
+The server creates the worktree next to the main checkout
+(`<repo>-worktrees/<branch>`), and it becomes the child session's workspace.
+The branch forks from the orchestrator's own worktree branch when it has one,
+otherwise from the main checkout's `HEAD`. Uncommitted changes are not carried
+over. If the orchestrator's workspace is not a git repository on a bound host,
+or the host cannot create the worktree (for example, it is offline), the
+sub-agent runs unisolated. The child keeps running on the orchestrator's
+runner and does not own the host: stopping or archiving it never touches the
+orchestrator. Deleting the child with `delete_branch=true` removes its worktree
+and branch.
+
+An orchestrator can also choose per dispatch with `worktree` / `base_branch`
+in the `sys_session_send` args object (or top-level on `sys_session_create`
+with `agent_id`). An explicit `worktree: true` fails instead of silently
+running unisolated. The tool result reports the created
+`worktree: {path, branch}`. Continuing an existing session keeps its worktree.
+
 ## Policies
 
 Policies can inspect requests, responses, tool calls, and tool results.

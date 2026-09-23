@@ -9272,6 +9272,34 @@ _DELETE_WORKTREE_OFFLINE_MESSAGE = (
 )
 
 
+_WORKTREE_HOST_MAX_DEPTH = 16
+
+
+def _worktree_host_id(conv: Any, conversation_store: Any) -> str | None:
+    """
+    Resolve the host that holds a session's server-created worktree.
+
+    Top-level sessions own their host. Sub-agent children never do (they
+    run on the parent's runner), so their worktree lives on the nearest
+    ancestor's host.
+
+    :param conv: The session's :class:`Conversation`.
+    :param conversation_store: Store used to walk the parent chain.
+    :returns: The host id, or ``None`` when no ancestor is host-bound.
+    """
+    current = conv
+    for _ in range(_WORKTREE_HOST_MAX_DEPTH):
+        if current.host_id is not None:
+            return current.host_id
+        parent_id = current.parent_conversation_id
+        if parent_id is None:
+            return None
+        current = conversation_store.get_conversation(parent_id)
+        if current is None:
+            return None
+    return None
+
+
 async def _remove_session_worktree_best_effort(
     *,
     host_id: str,
@@ -11508,6 +11536,7 @@ __all__ = [
     "_validated_subagent_routing_override",
     "_wait_for_managed_runner_tunnel",
     "_wait_for_runner_client",
+    "_worktree_host_id",
     "announce_hosts_changed",
     "cancel_managed_launch_tasks",
     "prefetch_session_routing_catalogs",
