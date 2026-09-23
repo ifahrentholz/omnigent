@@ -1,3 +1,4 @@
+import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -25,6 +26,22 @@ import { FilesPanel } from "./FilesPanel";
 import { FilesPanelDrawer } from "./FilesPanelDrawer";
 import { FolderTree } from "./FolderTree";
 import { SCROLL_RESTORE_BUDGET_MS } from "./useScrollRestore";
+
+vi.mock("@/hooks/useBranchDiff", async (importOriginal) => ({
+  ...(await importOriginal<typeof BranchDiffModule>()),
+  useBranchChanges: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+  })),
+  useBranchFileDiff: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+  })),
+}));
 
 vi.mock("@/hooks/useWorkspaceChangedFiles", async (importOriginal) => ({
   // Keep the module's PURE path helpers real. relativizeToWorkspace decides
@@ -1911,5 +1928,92 @@ describe("FilesPanel double-click navigation", () => {
     fireEvent.click(screen.getByText("App.tsx"));
 
     expect(onFileSelect).toHaveBeenCalledWith("src/App.tsx");
+  });
+});
+
+describe("FilesPanel Changes baseline (Uncommitted vs base)", () => {
+  it("switches the list to everything the branch changed since its base", async () => {
+    const { useBranchChanges } = await import("@/hooks/useBranchDiff");
+    vi.mocked(useBranchChanges).mockReturnValue({
+      data: {
+        available: true,
+        reason: null,
+        base: "main",
+        mergeBase: "abc123",
+        data: [
+          {
+            ...changedFile("src/committed.ts"),
+            previous_path: null,
+            renamed: false,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as unknown as ReturnType<typeof useBranchChanges>);
+    renderPanel({
+      conversationId: "conv_branch_toggle",
+      flatView: true,
+      files: [],
+      changedFiles: [changedFile("src/uncommitted.ts")],
+    });
+
+    expect(screen.getByText("uncommitted.ts")).toBeTruthy();
+    expect(screen.queryByText("committed.ts")).toBeNull();
+
+    fireEvent.click(screen.getByRole("radio", { name: "vs main" }));
+
+    expect(await screen.findByText("committed.ts")).toBeTruthy();
+    expect(screen.queryByText("uncommitted.ts")).toBeNull();
+    expect(screen.getByRole("radio", { name: "vs main" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    expect(vi.mocked(useBranchChanges)).toHaveBeenLastCalledWith("conv_branch_toggle", {
+      enabled: true,
+    });
+  });
+
+  it("explains why the branch view is unavailable for a non-git workspace", async () => {
+    const { useBranchChanges } = await import("@/hooks/useBranchDiff");
+    vi.mocked(useBranchChanges).mockReturnValue({
+      data: {
+        available: false,
+        reason: "workspace is not a git repository",
+        base: null,
+        mergeBase: null,
+        data: [],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    } as unknown as ReturnType<typeof useBranchChanges>);
+    useAllFilesMock.mockReturnValue(allFilesResult([]));
+    useChangedFilesMock.mockReturnValue(changedFilesResult([]));
+    useDirectoryMock.mockReturnValue(directoryResult());
+    useEnvironmentMock.mockReturnValue(environmentResult());
+    useSearchMock.mockReturnValue(searchResult());
+    render(
+      <MemoryRouter initialEntries={["/c/conv_plain?diffsrc=branch"]}>
+        <Routes>
+          <Route
+            path="/c/:conversationId"
+            element={
+              <FilesPanel
+                sort="recent"
+                onSortChange={vi.fn()}
+                flatView
+                onFileSelect={vi.fn()}
+                showHidden={false}
+                onShowHiddenChange={vi.fn()}
+              />
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByText("Branch comparison unavailable: workspace is not a git repository"),
+    ).toBeTruthy();
   });
 });

@@ -1,3 +1,4 @@
+import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 // Tests for FileViewer's comments-panel open/close semantics and URL sync:
 //
 //   1. Panel stays closed on fresh open regardless of whether the file has comments.
@@ -25,6 +26,22 @@ import { isFilePositionPending } from "./filePositionState";
 const codeViewerRenders = vi.hoisted(() => vi.fn());
 
 // ── Mock heavy child components ───────────────────────────────────────────────
+
+vi.mock("@/hooks/useBranchDiff", async (importOriginal) => ({
+  ...(await importOriginal<typeof BranchDiffModule>()),
+  useBranchChanges: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+  })),
+  useBranchFileDiff: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+  })),
+}));
 
 vi.mock("./CodeViewer", () => ({
   // Expose the resolved viewMode so tests can assert which surface FileViewer
@@ -2094,4 +2111,43 @@ describe("file position navigation", () => {
       expect(screen.getByTestId("code-viewer")).toHaveAttribute("data-view-mode", "editor");
     },
   );
+});
+
+describe("FileViewer diff baseline (?diffsrc=branch)", () => {
+  it("diffs the file against the branch's fork point, including renames", async () => {
+    const { useBranchChanges, useBranchFileDiff } = await import("@/hooks/useBranchDiff");
+    vi.mocked(useBranchChanges).mockReturnValue({
+      data: {
+        available: true,
+        reason: null,
+        base: "main",
+        mergeBase: "abc123",
+        data: [
+          {
+            path: "file1.py",
+            name: "file1.py",
+            status: "modified",
+            renamed: true,
+            previous_path: "old1.py",
+            bytes: 3,
+            modified_at: null,
+            lines_added: 1,
+            lines_removed: 0,
+          },
+        ],
+      },
+    } as unknown as ReturnType<typeof useBranchChanges>);
+    vi.mocked(useBranchFileDiff).mockReturnValue({
+      data: { path: "file1.py", before: "base", after: "task" },
+    } as unknown as ReturnType<typeof useBranchFileDiff>);
+    useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+
+    renderViewer({ open: true, path: "file1.py", initialSearch: "diff=1&diffsrc=branch" });
+
+    expect(vi.mocked(useBranchChanges)).toHaveBeenLastCalledWith("conv_1", { enabled: true });
+    expect(vi.mocked(useBranchFileDiff)).toHaveBeenLastCalledWith("conv_1", "file1.py", "old1.py");
+    // The HEAD-baseline query is parked while the branch baseline is active.
+    expect(vi.mocked(useFileDiff)).toHaveBeenLastCalledWith("conv_1", null);
+    expect(await screen.findByTestId("diff-viewer")).toBeInTheDocument();
+  });
 });
