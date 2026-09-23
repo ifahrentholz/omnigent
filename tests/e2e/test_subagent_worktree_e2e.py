@@ -211,7 +211,19 @@ def test_worker_subagent_runs_in_its_own_worktree(
         assert parent["workspace"] == str(repo.resolve())
         assert parent["git_branch"] is None
 
+        assert child["host_id"] is None, "a child must not own the parent's host"
         _wait_for_text(http_client, child["id"], _MARKER)
+
+        # Stopping the worker must not tear down the orchestrator's runner:
+        # the child shares it, so the parent stays online afterwards.
+        runner_id = parent["runner_id"]
+        stop = http_client.post(
+            f"/v1/sessions/{child['id']}/events", json={"type": "stop_session", "data": {}}
+        )
+        assert stop.status_code < 400, stop.text
+        time.sleep(3)
+        status = http_client.get(f"/v1/runners/{runner_id}/status")
+        assert status.status_code == 200 and status.json().get("online") is True, status.text
     finally:
         daemon.proc.send_signal(signal.SIGTERM)
         try:

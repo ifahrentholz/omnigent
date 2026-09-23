@@ -515,3 +515,12 @@ async def test_sub_agent_child_gets_its_own_worktree(
     assert child["git_branch"] == "omni/login-abc123"
     assert child["workspace"] != parent["workspace"]
     assert child["workspace"].endswith("omni-login-abc123")
+    # The child runs on the parent's runner: it must not own the host, or
+    # stopping/archiving it would tear down the orchestrator's runner.
+    assert child["host_id"] is None
+
+    # Deleting the child removes its worktree through the parent's host.
+    deleted = await client.delete(f"/v1/sessions/{child['id']}", params={"delete_branch": "true"})
+    assert deleted.status_code in (200, 204), deleted.text
+    assert [frame.worktree_path for frame in cap.remove] == [child["workspace"]]
+    assert cap.remove[0].branch == "omni/login-abc123"

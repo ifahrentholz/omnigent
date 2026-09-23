@@ -519,7 +519,11 @@ The server creates the worktree next to the main checkout
 The branch forks from the orchestrator's own worktree branch when it has one,
 otherwise from the main checkout's `HEAD`. Uncommitted changes are not carried
 over. If the orchestrator's workspace is not a git repository on a bound host,
-the sub-agent runs unisolated.
+or the host cannot create the worktree (for example, it is offline), the
+sub-agent runs unisolated. The child keeps running on the orchestrator's
+runner and does not own the host: stopping or archiving it never touches the
+orchestrator. Deleting the child with `delete_branch=true` removes its worktree
+and branch.
 
 An orchestrator can also choose per dispatch with `worktree` / `base_branch`
 in the `sys_session_send` args object (or top-level on `sys_session_create`

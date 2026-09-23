@@ -464,3 +464,146 @@ async def test_session_create_rejects_worktree_with_config_path() -> None:
             publish_event=None,
         )
     assert "only with 'agent_id'" in json.loads(output)["error"]
+
+
+async def _send_with_create_handler(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    agent_spec: Any,
+    parent: dict[str, Any],
+    args: dict[str, Any],
+    on_create: Any,
+) -> tuple[str, list[dict[str, Any]]]:
+    """
+    Drive one ``sys_session_send`` with a scripted ``POST /v1/sessions``.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param agent_spec: The parent spec under test.
+    :param parent: Parent session snapshot served by the mock server.
+    :param args: The dispatch's ``args`` object.
+    :param on_create: ``(attempt, body) -> httpx.Response`` for each create.
+    :returns: The raw tool output and every create body sent.
+    """
+    from omnigent.runner import app as runner_app
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    monkeypatch.setattr(runner_app, "get_session_agent_id", lambda _sid: "ag_parent")
+    monkeypatch.setattr(runner_app, "register_child_session", lambda *a, **k: None)
+    bodies: list[dict[str, Any]] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        """Serve the parent, empty child list, scripted creates, events."""
+        path = request.url.path
+        if request.method == "GET" and path == "/v1/sessions/conv_parent":
+            return httpx.Response(200, json=parent)
+        if request.method == "GET" and path == "/v1/sessions/conv_parent/child_sessions":
+            return httpx.Response(200, json={"data": []})
+        if request.method == "POST" and path == "/v1/sessions":
+            body = json.loads(request.content)
+            bodies.append(body)
+            return on_create(len(bodies), body)
+        if request.method == "POST" and path.endswith("/events"):
+            return httpx.Response(202, json={"queued": True})
+        return httpx.Response(404, json={"error": str(request.url)})
+
+    inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://server"
+    ) as client:
+        try:
+            output = await execute_tool(
+                tool_name="sys_session_send",
+                arguments=json.dumps({"agent": "worker", "args": args}),
+                server_client=client,
+                conversation_id="conv_parent",
+                agent_spec=agent_spec,
+                session_inbox=inbox,
+            )
+        finally:
+            runner_app.unregister_subagent_work("conv_child")
+            runner_app._session_inboxes_ref.pop("conv_parent", None)
+    return output, bodies
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_falls_back_when_worktree_creation_fails(
+    monkeypatch: pytest.MonkeyPatch, git_repo: Path
+) -> None:
+    """
+    A spec-default isolation that the host cannot provide (offline host,
+    git error) degrades to an unisolated child instead of failing.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param git_repo: Initialized repository fixture.
+    """
+
+    def _on_create(attempt: int, body: dict[str, Any]) -> httpx.Response:
+        if "git" in body:
+            return httpx.Response(409, json={"error": {"message": "host is offline"}})
+        return httpx.Response(201, json={"id": "conv_child"})
+
+    output, bodies = await _send_with_create_handler(
+        monkeypatch,
+        agent_spec=_parent_spec(worktree_default=True),
+        parent={"id": "conv_parent", "host_id": "host_1", "workspace": str(git_repo)},
+        args={"input": "fix login"},
+        on_create=_on_create,
+    )
+    assert json.loads(output)["status"] == "launching", output
+    assert len(bodies) == 2
+    assert "git" in bodies[0]
+    assert not {"host_id", "workspace", "git"} & bodies[1].keys()
+    # The fallback kept the auto-assigned title: no ordinal was burned.
+    assert bodies[0]["title"] == bodies[1]["title"]
+
+
+@pytest.mark.asyncio
+async def test_required_worktree_conflict_is_not_retried_as_name_clash(
+    monkeypatch: pytest.MonkeyPatch, git_repo: Path
+) -> None:
+    """
+    A 409 from worktree creation is not a (parent, title) clash, so an
+    explicit request fails once instead of bumping ordinals.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param git_repo: Initialized repository fixture.
+    """
+    output, bodies = await _send_with_create_handler(
+        monkeypatch,
+        agent_spec=_parent_spec(worktree_default=False),
+        parent={"id": "conv_parent", "host_id": "host_1", "workspace": str(git_repo)},
+        args={"input": "fix login", "worktree": True},
+        on_create=lambda _n, _b: httpx.Response(409, text="host is offline"),
+    )
+    assert output.startswith("Error: failed to create child session: 409")
+    assert len(bodies) == 1
+
+
+@pytest.mark.asyncio
+async def test_name_clash_still_bumps_the_ordinal(
+    monkeypatch: pytest.MonkeyPatch, git_repo: Path
+) -> None:
+    """
+    A genuine duplicate-title 409 keeps the ordinal retry, with a fresh
+    branch name per attempt.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param git_repo: Initialized repository fixture.
+    """
+
+    def _on_create(attempt: int, body: dict[str, Any]) -> httpx.Response:
+        if attempt == 1:
+            return httpx.Response(409, text="sub-agent name already exists under parent")
+        return httpx.Response(201, json={"id": "conv_child"})
+
+    output, bodies = await _send_with_create_handler(
+        monkeypatch,
+        agent_spec=_parent_spec(worktree_default=False),
+        parent={"id": "conv_parent", "host_id": "host_1", "workspace": str(git_repo)},
+        args={"input": "fix login", "worktree": True},
+        on_create=_on_create,
+    )
+    assert json.loads(output)["status"] == "launching", output
+    assert len(bodies) == 2
+    assert bodies[0]["title"] != bodies[1]["title"]
+    assert bodies[0]["git"]["branch_name"] != bodies[1]["git"]["branch_name"]

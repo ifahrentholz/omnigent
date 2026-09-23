@@ -179,6 +179,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _persist_model_change_note,
     _publish_runner_recovered_status,
     _run_managed_launch,
+    _session_owned_host_id,
     _spawn_archive_stop,
     _validate_session_model_selection,
     ensure_runner_connected,
@@ -747,7 +748,7 @@ def register_core_routes(
         # self-heal, or the host-launch-failure path below.
         _terminal_first_create = (
             conv is not None
-            and body.host_id is not None
+            and _session_owned_host_id(body) is not None
             and conv.labels.get(_CLAUDE_NATIVE_UI_LABEL_KEY) == _CLAUDE_NATIVE_UI_LABEL_VALUE
         )
         if _terminal_first_create:
@@ -818,7 +819,7 @@ def register_core_routes(
         # tracker entry registered here (see post_event). Config
         # problems and malformed repo workspaces still fail the POST
         # synchronously.
-        launch_host_id = body.host_id
+        launch_host_id = _session_owned_host_id(body)
         if body.host_type == "managed" and resp.runner_id is None:
             await _schedule_managed_launch(
                 request,

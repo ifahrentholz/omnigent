@@ -1977,12 +1977,23 @@ async def _teardown_failed_child(
         return None
 
     last_error = ""
+    # A worktree created for this child is removed with it. The server
+    # refuses (409) when that host is unreachable; the phantom session
+    # matters more than the stray worktree, so fall back to a plain delete.
+    delete_params: dict[str, str] = {"delete_branch": "true"}
     for attempt in range(2):
         try:
             resp = await server_client.delete(
                 f"/v1/sessions/{child_session_id}",
+                params=delete_params,
                 timeout=30.0,
             )
+            if resp.status_code == 409 and delete_params:
+                delete_params = {}
+                resp = await server_client.delete(
+                    f"/v1/sessions/{child_session_id}",
+                    timeout=30.0,
+                )
         except httpx.HTTPError as exc:
             last_error = f"{type(exc).__name__}: {exc}"
         else:
@@ -2107,6 +2118,19 @@ async def _build_subagent_message_content(
         content.append({"type": block_type, "file_id": new_id})
 
     return CopyResult(content=content)
+
+
+def _is_child_name_collision(resp: httpx.Response) -> bool:
+    """
+    Tell a (parent, title) name clash apart from other 409 conflicts.
+
+    Worktree creation also answers 409 (e.g. the host is offline), which
+    must not be retried as an ordinal bump.
+
+    :param resp: A ``POST /v1/sessions`` response.
+    :returns: ``True`` for the store's duplicate-title conflict.
+    """
+    return resp.status_code == 409 and "name already exists" in resp.text
 
 
 def _subagent_spec_wants_worktree(sub_agent_name: str, agent_spec: AgentSpec | None) -> bool:
@@ -2891,7 +2915,28 @@ async def _execute_subagent_tool(
                     create_body.update(worktree_fields)
                 resp = await server_client.post("/v1/sessions", json=create_body, timeout=30.0)
                 if (
+                    worktree_mode == "auto"
+                    and worktree_fields is not None
+                    and 400 <= resp.status_code < 500
+                    and not _is_child_name_collision(resp)
+                ):
+                    # Best-effort isolation: a host/git failure (offline
+                    # host, unknown base ref) degrades to the shared
+                    # workspace instead of failing the dispatch.
+                    _logger.warning(
+                        "sub-agent worktree creation failed (%s %s); dispatching %r unisolated",
+                        resp.status_code,
+                        resp.text[:200],
+                        session_name,
+                        extra={"session_id": conversation_id},
+                    )
+                    worktree_mode = "off"
+                    for key in worktree_fields:
+                        create_body.pop(key, None)
+                    resp = await server_client.post("/v1/sessions", json=create_body, timeout=30.0)
+                if (
                     resp.status_code == 409
+                    and _is_child_name_collision(resp)
                     and _auto_ordinal
                     and _ordinal_attempt < _max_ordinal_retries
                 ):
