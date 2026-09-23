@@ -14679,6 +14679,48 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/resources/git/merge": {
+      "post": {
+        "description": "Land the session's task branch on its base branch.\n\nRuns on the runner, which holds the worktree: the branch checked out\nin the session's workspace is merged into `base` (default: the\nsession's `git_base_branch`) in the checkout that has the base.\nBoth must be clean; a conflicting merge is aborted and reported with\nits files (409), leaving both trees unchanged.\n\n**Returns:** `{merged, branch, base, commit, checkout}`.",
+        "operationId": "merge_branch_into_base_v1_sessions__session_id__resources_git_merge_post",
+        "parameters": [
+          {
+            "description": "The task session, e.g. a worktree sub-agent.",
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Branch Into Base",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/resources/github": {
       "get": {
         "description": "Return GitHub context (repo, branch, base ref, PR) for a session.\n\nProxies to the runner, which shells out to `gh`/`git` in the\nworkspace. Returns an `available: false` payload (200) when `gh` is\nmissing or the workspace is not a git repo.\n\n**Returns:** The `session.github.info` object.",

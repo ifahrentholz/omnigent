@@ -929,6 +929,8 @@ def register_resources_routes(
         path: str,
         body: dict[str, Any],
         conversation: Conversation,
+        *,
+        timeout: float = 10.0,
     ) -> tuple[int, dict[str, Any]]:
         """Proxy a POST request to the runner and return status + JSON.
 
@@ -936,6 +938,7 @@ def register_resources_routes(
         :param path: Runner-relative URL path.
         :param body: JSON body to forward.
         :param conversation: Conversation loaded during authorization.
+        :param timeout: Seconds to wait for the runner, e.g. longer for git.
         :returns: Tuple of (status_code, parsed_json_body).
         :raises HTTPException: 502 on transport failure.
         """
@@ -952,7 +955,7 @@ def register_resources_routes(
             resp = await runner_client.post(
                 path,
                 json=body,
-                timeout=10.0,
+                timeout=timeout,
             )
         except (httpx.HTTPError, ConnectionError) as exc:
             raise HTTPException(
@@ -2976,6 +2979,45 @@ def register_resources_routes(
             runner_params={"pr_url": pr_url} if pr_url else None,
             runner_path=f"/v1/sessions/{session_id}/resources/github/changes",
         )
+
+    @router.post("/sessions/{session_id}/resources/git/merge", response_model=None)
+    async def merge_branch_into_base(request: Request, session_id: str) -> Any:
+        """
+        Land the session's task branch on its base branch.
+
+        Runs on the runner, which holds the worktree: the branch checked out
+        in the session's workspace is merged into ``base`` (default: the
+        session's ``git_base_branch``) in the checkout that has the base.
+        Both must be clean; a conflicting merge is aborted and reported with
+        its files (409), leaving both trees unchanged.
+
+        :param request: JSON body ``{base?, strategy?: "merge"|"squash", message?}``.
+        :param session_id: The task session, e.g. a worktree sub-agent.
+        :returns: ``{merged, branch, base, commit, checkout}``.
+        """
+        conv = await _validate_session(session_id, request, LEVEL_EDIT)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+        base = body.get("base") or conv.git_base_branch
+        if not isinstance(base, str) or not base:
+            raise HTTPException(
+                status_code=400, detail="Session has no base branch; pass one as 'base'"
+            )
+        strategy = body.get("strategy", "merge")
+        if strategy not in ("merge", "squash"):
+            raise HTTPException(status_code=400, detail="strategy must be 'merge' or 'squash'")
+        message = body.get("message")
+        status, result = await _proxy_post_to_runner(
+            session_id,
+            f"/v1/sessions/{session_id}/resources/git/merge",
+            {"base": base, "strategy": strategy, "message": message},
+            conv,
+            timeout=150.0,
+        )
+        if status >= 400:
+            return JSONResponse(status_code=status, content=result)
+        return result
 
     @router.post("/sessions/{session_id}/resources/github/prs", response_model=None)
     async def update_session_github_pr(request: Request, session_id: str) -> dict[str, Any]:
