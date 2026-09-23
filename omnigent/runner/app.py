@@ -1979,6 +1979,17 @@ def create_runner_app(
             return Path(workspace.strip()).expanduser().resolve()
         return runner_workspace.resolve() if runner_workspace is not None else None
 
+    async def _session_own_workspace(session_id: str) -> Path | None:
+        """A session's own on-disk workspace when it isn't the runner's (a sub-agent worktree)."""
+        workspace = await _session_workspace_value(session_id)
+        if not workspace:
+            return None
+        session_path = Path(workspace).expanduser().resolve()
+        runner_root = runner_workspace.resolve() if runner_workspace is not None else None
+        if session_path == runner_root or not session_path.is_dir():
+            return None
+        return session_path
+
     async def _load_legacy_session_init_context() -> _SessionInitContext:
         await _get_server_version(server_client)
         return _SessionInitContext(envelope=None)
@@ -6956,6 +6967,7 @@ def create_runner_app(
         _resp_to_conv=_resp_to_conv,
         _search_registry_for_root=_search_registry_for_root,
         _session_comment_relays=_session_comment_relays,
+        _session_own_workspace=_session_own_workspace,
         _session_runtime_cwd=_session_runtime_cwd,
         auth_token_factory=auth_token_factory,
         filesystem_registry=filesystem_registry,

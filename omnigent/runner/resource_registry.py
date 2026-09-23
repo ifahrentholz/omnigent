@@ -405,6 +405,9 @@ class SessionResourceRegistry:
             terminal_registry.environment_resolver = self._resolve_terminal_environment
         self._runner_workspace = runner_workspace
         self._per_session_workspace = per_session_workspace
+        # Sessions rooted somewhere other than the runner workspace, e.g. a
+        # sub-agent in its own git worktree sharing the parent's runner.
+        self._session_workspaces: dict[str, str] = {}
         self._primary_envs: dict[str, OSEnvironment] = {}
         self._primary_env_specs: dict[str, OSEnvSpec | None] = {}
         self._codex_skills_dirs: dict[str, tempfile.TemporaryDirectory[str]] = {}
@@ -803,6 +806,26 @@ class SessionResourceRegistry:
             self._codex_skills_dirs[session_id] = directory
         return Path(directory.name)
 
+    def set_session_workspace(self, session_id: str, workspace: str | None) -> None:
+        """Root a session's primary environment at its own workspace.
+
+        A sub-agent child runs on its parent's runner but in its own git
+        worktree; without this its file panel would browse the parent's
+        checkout. A changed root drops the cached environment.
+
+        :param session_id: Session/conversation identifier.
+        :param workspace: The session's absolute workspace, or ``None`` to
+            leave the session on the runner workspace.
+        """
+        if not workspace:
+            return
+        with self._lock:
+            if self._session_workspaces.get(session_id) == workspace:
+                return
+            self._session_workspaces[session_id] = workspace
+            self._primary_envs.pop(session_id, None)
+            self._primary_env_specs.pop(session_id, None)
+
     def resolve_environment(
         self,
         session_id: str,
@@ -907,7 +930,11 @@ class SessionResourceRegistry:
 
     def _effective_primary_spec(self, session_id: str, spec: OSEnvSpec) -> OSEnvSpec:
         """Use the same workspace identity for tools and inherited terminals."""
-        if self._runner_workspace is not None:
+        session_workspace = self._session_workspaces.get(session_id)
+        if session_workspace is not None:
+            # A session rooted in its own git worktree (a sub-agent) wins.
+            cwd = session_workspace
+        elif self._runner_workspace is not None:
             cwd = (
                 _contained_session_dir(self._runner_workspace, session_id)
                 if self._per_session_workspace
@@ -950,11 +977,15 @@ class SessionResourceRegistry:
         from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
         from omnigent.inner.os_env import create_os_environment
 
-        # Prefer the CLI launch workspace so that the OS environment
-        # cwd matches the filesystem-registry watch path.  Fall back
-        # to the per-session temp dir for remote/cloud runners that
-        # have no workspace affinity.
-        if self._runner_workspace is not None:
+        # A session with its own workspace (a sub-agent worktree) wins.
+        # Otherwise prefer the CLI launch workspace so that the OS
+        # environment cwd matches the filesystem-registry watch path, and
+        # fall back to the per-session temp dir for remote/cloud runners
+        # that have no workspace affinity.
+        session_workspace = self._session_workspaces.get(session_id)
+        if session_workspace is not None:
+            default_cwd = session_workspace
+        elif self._runner_workspace is not None:
             if self._per_session_workspace:
                 # Isolate sessions under the shared workspace.
                 default_cwd = _contained_session_dir(self._runner_workspace, session_id)
@@ -1040,6 +1071,10 @@ class SessionResourceRegistry:
             spec_os_env = getattr(agent_spec, "os_env", None)
             if spec_os_env is None:
                 return None
+
+        session_workspace = self._session_workspaces.get(session_id)
+        if session_workspace is not None:
+            return str(Path(session_workspace).resolve())
 
         # Runner workspace wins when set. Per-session subdirectory
         # isolation is preserved so concurrent sessions

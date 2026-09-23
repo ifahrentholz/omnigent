@@ -132,6 +132,7 @@ def register_resource_routes(
     _resp_to_conv: dict[str, str],
     _search_registry_for_root: Callable[[Path], FilesystemRegistry],
     _session_comment_relays: dict[str, _CommentRelayBinding],
+    _session_own_workspace: Callable[[str], Coroutine[Any, Any, Path | None]],
     _session_runtime_cwd: Callable[[str], Coroutine[Any, Any, Path | None]],
     auth_token_factory: Callable[[], str | None] | None,
     filesystem_registry: FilesystemRegistry | None,
@@ -989,6 +990,11 @@ def register_resource_routes(
                 status_code=404,
                 detail="Session agent has no os_env configured; filesystem API unavailable.",
             )
+        # A session stored with its own on-disk workspace (a sub-agent's
+        # worktree) browses that tree, not the shared runner's checkout.
+        own_workspace = await _session_own_workspace(session_id)
+        if own_workspace is not None:
+            resource_registry.set_session_workspace(session_id, str(own_workspace))
         return spec
 
     @app.get("/v1/sessions/{session_id}/resources/environments/{environment_id}/filesystem")
