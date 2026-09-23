@@ -4642,6 +4642,18 @@
             ],
             "description": "Optional custom instruction prefix; defaults to the standard \"Please address the following file review comments.\" header.",
             "title": "Instruction"
+          },
+          "target_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When set, the server delivers the message itself into this session \u2014 the comments' own session or one of its ancestors (e.g. the orchestrator of a worktree sub-agent) \u2014 and marks the comments addressed only after delivery succeeds. `None` keeps the legacy flow: the client posts the returned `formatted_message`.",
+            "title": "Target Session Id"
           }
         },
         "required": [

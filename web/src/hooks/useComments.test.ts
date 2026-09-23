@@ -288,6 +288,30 @@ describe("useSendCommentsToAgent", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["comments", "conv_1"] });
   });
 
+  it("leaves delivery to the server when it targeted another session", async () => {
+    // A server-delivered send (target_session_id, e.g. the orchestrator)
+    // already posted the message; echoing it into the visible chat would
+    // duplicate it in the wrong session.
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        formatted_message: "routed",
+        sent_comment_ids: ["c1"],
+        delivered_to: "conv_parent",
+      }),
+    );
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const { result } = renderSend(queryClient);
+    result.current.mutate({ comment_ids: ["c1"], target_session_id: "conv_parent" });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      comment_ids: ["c1"],
+      target_session_id: "conv_parent",
+    });
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
   it("throws on non-2xx and never dispatches to the agent", async () => {
     // A failed send must NOT call the chat store, or the user sees a
     // message dispatched while the comments stay unsent server-side.

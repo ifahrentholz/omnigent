@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { CheckIcon, Link2Icon, WandSparklesIcon } from "lucide-react";
+import { CheckIcon, CornerLeftUpIcon, Link2Icon, WandSparklesIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useResizableCommentsPanel } from "@/hooks/useResizableCommentsPanel";
@@ -39,6 +39,11 @@ export interface CommentsPanelProps {
   activeSelection: ActiveSelection | null;
   onAddComment: (body: string) => void;
   onAddressAll: () => void;
+  /**
+   * Sends every open comment to the parent session instead (a sub-agent's
+   * orchestrator). Omitted for top-level sessions.
+   */
+  onAddressAllToParent?: () => void;
   onEditComment: (id: string, body: string) => void;
   onDeleteComment: (id: string) => void;
   onClickComment: (comment: Comment) => void;
@@ -77,6 +82,7 @@ export function CommentsPanel({
   activeSelection,
   onAddComment,
   onAddressAll,
+  onAddressAllToParent,
   onEditComment,
   onDeleteComment,
   onClickComment,
@@ -179,17 +185,33 @@ export function CommentsPanel({
       <div className="flex h-11 shrink-0 items-center justify-between px-3 border-b border-border">
         <span className="text-sm font-semibold">Comments</span>
         {tab === "open" && (
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            className="rounded-full px-3 gap-1.5"
-            disabled={!canAddress || comments.length === 0 || addressPending}
-            onClick={onAddressAll}
-          >
-            <WandSparklesIcon className="size-3.5" />
-            Address All
-          </Button>
+          <div className="flex items-center gap-1">
+            {onAddressAllToParent && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="rounded-full px-2 gap-1"
+                title="Send these comments to the orchestrator that dispatched this sub-agent"
+                disabled={comments.length === 0 || addressPending}
+                onClick={onAddressAllToParent}
+              >
+                <CornerLeftUpIcon className="size-3.5" />
+                To orchestrator
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              className="rounded-full px-3 gap-1.5"
+              disabled={!canAddress || comments.length === 0 || addressPending}
+              onClick={onAddressAll}
+            >
+              <WandSparklesIcon className="size-3.5" />
+              Address All
+            </Button>
+          </div>
         )}
       </div>
 
