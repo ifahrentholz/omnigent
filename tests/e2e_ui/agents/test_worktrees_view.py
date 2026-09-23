@@ -96,6 +96,26 @@ def test_worktrees_view_lists_task_branches(
         re.compile(rf"/v1/sessions/{_CHILD_ID}/resources/git/changes(\?|$)"), _branch_changes
     )
 
+    merge_requests: list[dict[str, object]] = []
+
+    def _merge(route: Route) -> None:
+        merge_requests.append(json.loads(route.request.post_data or "{}"))
+        route.fulfill(
+            status=200,
+            headers={"content-type": "application/json"},
+            body=json.dumps(
+                {
+                    "merged": True,
+                    "branch": "omni/login-a1b2c3",
+                    "base": "main",
+                    "commit": "9c1e2d3f4a5b",
+                    "checkout": "/repo",
+                }
+            ),
+        )
+
+    page.route(re.compile(rf"/v1/sessions/{_CHILD_ID}/resources/git/merge$"), _merge)
+
     page.goto(f"{base_url}/c/{session_id}")
     open_right_rail(page)
     rail = page.get_by_role("complementary", name="Workspace")
@@ -118,3 +138,10 @@ def test_worktrees_view_lists_task_branches(
     assert params["file"] == ["src/login.py"]
     assert params["diff"] == ["1"]
     assert params["diffsrc"] == ["branch"]
+
+    # Land the task: squash it into main.
+    row.get_by_role("button", name="Land…").click()
+    row.get_by_label("Merge strategy").select_option("squash")
+    row.get_by_role("button", name="Land into main").click()
+    expect(row.get_by_text("Landed into main (9c1e2d3).")).to_be_visible(timeout=30_000)
+    assert merge_requests == [{"strategy": "squash"}]
