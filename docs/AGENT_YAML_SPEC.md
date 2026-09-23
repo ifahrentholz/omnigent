@@ -566,6 +566,20 @@ with `agent_id`). An explicit `worktree: true` fails instead of silently
 running unisolated. The tool result reports the created
 `worktree: {path, branch}`. Continuing an existing session keeps its worktree.
 
+### Capping running sub-agents
+
+`spawn_bounds` limits dispatches per turn. To bound how many sub-agents run
+at the same time, set `max_running_subagents` on the orchestrator:
+
+```yaml
+max_running_subagents: 4
+```
+
+A `sys_session_send` that would start a fifth concurrent dispatch returns an
+error instead, telling the orchestrator to wait for a result in its inbox.
+Follow-up messages to a sub-agent that is already running do not take a new
+slot.
+
 ## Policies
 
 Policies can inspect requests, responses, tool calls, and tool results.

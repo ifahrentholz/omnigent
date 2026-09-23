@@ -871,6 +871,9 @@ class AgentDef:
     # sub-agent types. Session reads are always on. YAML key:
     # ``spawn:``.
     spawn: bool = False
+    # Cap on concurrently running sub-agent dispatches; None = unlimited.
+    # YAML key: ``max_running_subagents:``.
+    max_running_subagents: int | None = None
     # Authority for the agent to share the session it runs in, via
     # sys_session_share — the SOLE enabler of that tool (independent of
     # spawn / declared agents, and unrelated to server-API / CLI

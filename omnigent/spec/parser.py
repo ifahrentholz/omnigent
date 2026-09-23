@@ -303,6 +303,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     # Top-level ``worktree:`` flag: when this agent runs as a sub-agent,
     # isolate each new session in its own git worktree.
     worktree = _parse_worktree_flag(raw.get("worktree"))
+    max_running_subagents = parse_max_running_subagents(raw.get("max_running_subagents"))
     # Top-level ``agent_session_sharing:`` flag is the SOLE enabler of
     # the ``sys_session_share`` tool, independent of ``spawn`` /
     # ``tools.agents`` (and unrelated to server-API / CLI sharing).
@@ -347,8 +348,24 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         timers=timers,
         spawn=spawn,
         worktree=worktree,
+        max_running_subagents=max_running_subagents,
         agent_session_sharing=agent_session_sharing,
     )
+
+
+def parse_max_running_subagents(raw: object) -> int | None:
+    """
+    Parse the top-level YAML ``max_running_subagents:`` cap.
+
+    :param raw: Raw YAML value; ``None`` when absent.
+    :returns: The cap, or ``None`` for unlimited.
+    :raises ValueError: If the value is not a positive integer.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+        raise ValueError(f"top-level max_running_subagents: must be an integer >= 1; got {raw!r}")
+    return raw
 
 
 def _parse_worktree_flag(raw: object) -> bool:
