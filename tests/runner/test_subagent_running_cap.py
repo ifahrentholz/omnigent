@@ -175,3 +175,111 @@ def test_legacy_yaml_cap_reaches_the_runner_spec() -> None:
 
     agent_def = load_agent_def({"name": "boss", "max_running_subagents": 4})
     assert agent_def_to_agent_spec(agent_def).max_running_subagents == 4
+
+
+@pytest.mark.asyncio
+async def test_parallel_dispatches_cannot_overshoot_the_cap(running_children: Any) -> None:
+    """
+    Four sends in one model response with a cap of two start exactly two:
+    slots are claimed before the first network call, not on registration.
+
+    :param running_children: Fixture registering unfinished dispatches.
+    """
+    from omnigent.runner import app as runner_app
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    running_children(0)
+    creates: list[str] = []
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        """Slow creates so all four sends overlap."""
+        path = request.url.path
+        if request.method == "GET" and path == f"/v1/sessions/{_PARENT}/child_sessions":
+            return httpx.Response(200, json={"data": []})
+        if request.method == "GET" and path == f"/v1/sessions/{_PARENT}":
+            return httpx.Response(200, json={"id": _PARENT})
+        if request.method == "POST" and path == "/v1/sessions":
+            body = json.loads(request.content)
+            await asyncio.sleep(0.05)
+            creates.append(body["title"])
+            return httpx.Response(201, json={"id": f"conv_par_{len(creates)}"})
+        if request.method == "POST" and path.endswith("/events"):
+            return httpx.Response(202, json={"queued": True})
+        return httpx.Response(404, json={"error": str(request.url)})
+
+    inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://server"
+    ) as client:
+        try:
+            outputs = await asyncio.gather(
+                *(
+                    execute_tool(
+                        tool_name="sys_session_send",
+                        arguments=json.dumps({"agent": "worker", "title": f"t{i}", "args": "go"}),
+                        server_client=client,
+                        conversation_id=_PARENT,
+                        agent_spec=_spec(2),
+                        session_inbox=inbox,
+                    )
+                    for i in range(4)
+                )
+            )
+        finally:
+            for index in range(1, 5):
+                runner_app.unregister_subagent_work(f"conv_par_{index}")
+            runner_app._session_inboxes_ref.pop(_PARENT, None)
+
+    assert len(creates) == 2, outputs
+    assert (
+        sum(output.startswith("Error: 2 sub-agents are already running") for output in outputs)
+        == 2
+    )
+    from omnigent.runner import subagent_cap
+
+    assert _PARENT not in subagent_cap._claims, "claims must be released after return"
+
+
+@pytest.mark.asyncio
+async def test_resend_by_session_id_respects_the_cap(running_children: Any) -> None:
+    """
+    Waking an idle child by ``session_id`` starts a new run, so it is refused
+    when the cap is reached.
+
+    :param running_children: Fixture registering unfinished dispatches.
+    """
+    from omnigent.runner import app as runner_app
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    running_children(1)
+    inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _r: httpx.Response(500)), base_url="http://server"
+    ) as client:
+        output = await execute_tool(
+            tool_name="sys_session_send",
+            arguments=json.dumps({"session_id": "conv_cap_idle", "args": "again"}),
+            server_client=client,
+            conversation_id=_PARENT,
+            agent_spec=_spec(1),
+            session_inbox=inbox,
+        )
+    runner_app._session_inboxes_ref.pop(_PARENT, None)
+    assert output.startswith("Error: 1 sub-agents are already running"), output
+
+
+@pytest.mark.asyncio
+async def test_recovered_waiting_work_does_not_hold_slots(running_children: Any) -> None:
+    """
+    After a runner restart, interrupted children are re-registered as
+    ``waiting`` with unknown state; they must not block new dispatches.
+
+    :param running_children: Fixture registering unfinished dispatches.
+    """
+    from omnigent.runner import app as runner_app
+
+    for child in running_children(2):
+        runner_app.get_subagent_work(child).status = "waiting"
+    output, creates = await _dispatch(_spec(2), "new")
+    assert json.loads(output)["status"] == "launching", output
+    assert creates == 1
