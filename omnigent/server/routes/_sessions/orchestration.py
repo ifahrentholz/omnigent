@@ -1056,6 +1056,7 @@ def _build_session_list_item(
         ),
         workspace=conv.workspace,
         git_branch=conv.git_branch,
+        git_base_branch=conv.git_base_branch,
         archived=conv.archived,
         comments_count=comments_fingerprint.count if comments_fingerprint else 0,
         comments_updated_at=(
@@ -1315,6 +1316,7 @@ def _build_session_response(
         pending_inputs=pending_inputs.snapshot_for(conv.id),
         workspace=conv.workspace,
         git_branch=conv.git_branch,
+        git_base_branch=conv.git_base_branch,
         archived=conv.archived,
         # Replay the last native Plan after a Server restart.
         todos=conv.session_todos,
@@ -10051,6 +10053,7 @@ async def _create_session_from_existing_agent(
     #  - bind (existing_worktree): workspace already IS the worktree;
     #    record its branch only, create nothing.
     git_branch: str | None = None
+    git_base_branch: str | None = None
     # Set to the created worktree path ONLY when Omnigent creates one.
     # Gates create-rollback: an existing worktree bound via
     # existing_worktree must never be force-removed on failure — it is
@@ -10078,6 +10081,7 @@ async def _create_session_from_existing_agent(
             )
             canonical_workspace = created_worktree.workspace or created_worktree.worktree_path
             git_branch = created_worktree.branch
+            git_base_branch = body.git.base_branch
             created_worktree_path = created_worktree.worktree_path
 
     # Native-terminal pass-through args.
@@ -10237,6 +10241,7 @@ async def _create_session_from_existing_agent(
                 host_id=_session_owned_host_id(body),
                 workspace=canonical_workspace,
                 git_branch=git_branch,
+                git_base_branch=git_base_branch,
                 terminal_launch_args=validated_launch_args,
                 project_id=project_resolution.project_id,
                 labels=initial_labels or None,

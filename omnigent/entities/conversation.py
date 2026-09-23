@@ -216,6 +216,9 @@ class Conversation:
         ``git_branch IS NOT NULL`` is the gate for offering worktree
         cleanup on session delete. See
         designs/SESSION_GIT_WORKTREE.md.
+    :param git_base_branch: Ref the created worktree branch forked
+        from, e.g. ``"main"``; the base for "all changes of this task"
+        diffs. ``None`` when unknown or no worktree was created.
     :param archived: Whether the session is archived. Archived
         sessions are hidden from the default ``GET /v1/sessions``
         listing (and the sidebar), surfacing only when the caller
@@ -260,6 +263,7 @@ class Conversation:
     terminal_launch_args: list[str] | None = None
     workspace: str | None = None
     git_branch: str | None = None
+    git_base_branch: str | None = None
     archived: bool = False
     # Live-state fields written by the replica holding the runner tunnel
     # so any replica's session list can serve them. ``live_status`` is the

@@ -2136,6 +2136,9 @@ class SessionResponse(BaseModel):
         ``None`` otherwise. The Web UI uses a non-``None`` value to
         offer the "delete local branch" cleanup checkbox on session
         delete. See designs/SESSION_GIT_WORKTREE.md.
+    :param git_base_branch: Ref the created worktree branch forked
+        from, e.g. ``"main"``; the base for "all changes of this
+        task" diffs. ``None`` when unknown or no worktree was created.
     :param archived: Whether the session is archived. Archived
         sessions are hidden from the default sidebar listing and
         surface only behind the "Show archived" toggle. ``False``
@@ -2227,6 +2230,7 @@ class SessionResponse(BaseModel):
     pending_inputs: list[dict[str, Any]] = Field(default_factory=list)
     workspace: str | None = None
     git_branch: str | None = None
+    git_base_branch: str | None = None
     archived: bool = False
     todos: list[dict[str, Any]] = Field(default_factory=list)
     model_options: list[NativeModelOption] = Field(default_factory=list)
@@ -2766,6 +2770,9 @@ class SessionListItem(BaseModel):
         ``None`` otherwise. The Web UI uses a non-``None`` value to
         offer the "delete local branch" cleanup checkbox on session
         delete. See designs/SESSION_GIT_WORKTREE.md.
+    :param git_base_branch: Ref the created worktree branch forked
+        from, e.g. ``"main"``; the base for "all changes of this
+        task" diffs. ``None`` when unknown or no worktree was created.
     :param archived: Whether the session is archived. Archived
         sessions are returned by ``GET /v1/sessions`` only when the
         request passes ``include_archived=true``; the sidebar groups
@@ -2823,6 +2830,7 @@ class SessionListItem(BaseModel):
     pending_elicitations_count: int = 0
     workspace: str | None = None
     git_branch: str | None = None
+    git_base_branch: str | None = None
     archived: bool = False
     comments_count: int = 0
     comments_updated_at: int | None = None

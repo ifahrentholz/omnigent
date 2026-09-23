@@ -1500,6 +1500,7 @@ def register_resources_routes(
                 conv.host_id,
                 conv.workspace,
                 conv.git_branch,
+                conv.git_base_branch,
             )
 
         _publish_and_persist_resource_event(

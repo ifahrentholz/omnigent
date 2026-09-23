@@ -257,6 +257,7 @@ def _to_conversation(
         ),
         workspace=meta.workspace if meta else None,
         git_branch=meta.git_branch if meta else None,
+        git_base_branch=meta.git_base_branch if meta else None,
         archived=row.archived,
         live_status=(
             decode_session_live_status(meta.live_status)
@@ -989,6 +990,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         host_id: str | None = None,
         workspace: str | None = None,
         git_branch: str | None = None,
+        git_base_branch: str | None = None,
         terminal_launch_args: list[str] | None = None,
         conversation_id: str | None = None,
         project_id: str | None = None,
@@ -1039,6 +1041,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             worktree, e.g. ``"feature/login"``. Set only when the
             session was created with a server-created worktree;
             ``None`` otherwise. See designs/SESSION_GIT_WORKTREE.md.
+        :param git_base_branch: Ref the created worktree branch forked
+            from, e.g. ``"main"``; ``None`` when unknown.
         :param terminal_launch_args: Optional pass-through CLI args
             for a native terminal wrapper (claude / codex), e.g.
             ``["--dangerously-skip-permissions"]``. ``None`` leaves
@@ -1163,6 +1167,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                     sub_agent_name=sub_agent_name,
                     workspace=workspace,
                     git_branch=git_branch,
+                    git_base_branch=git_base_branch,
                     terminal_launch_args=encoded_terminal_launch_args,
                     inference_snapshot=encoded_inference_snapshot,
                     project_id=project_id,
@@ -3857,6 +3862,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             meta.host_id = None
             meta.workspace = None
             meta.git_branch = None
+            meta.git_base_branch = None
             meta.runner_id = None
             return meta
 
@@ -3925,6 +3931,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         host_id: str,
         workspace: str | None = None,
         git_branch: str | None = None,
+        git_base_branch: str | None = None,
     ) -> Conversation:
         """
         Set the host that launched (or should launch) the runner.
@@ -3953,6 +3960,9 @@ class SqlAlchemyConversationStore(ConversationStore):
             resume path). ``None`` preserves the branch on the same
             host/workspace, but clears it when the host or an explicitly
             supplied workspace changes.
+        :param git_base_branch: Ref that worktree branch forked from, e.g.
+            ``"main"``. Written whenever ``git_branch`` is (``None``
+            clears it), so it never outlives the branch it describes.
         :returns: The updated :class:`Conversation`.
         :raises ConversationNotFoundError: If no conversation row
             exists for ``conversation_id``.
@@ -3976,6 +3986,9 @@ class SqlAlchemyConversationStore(ConversationStore):
                 meta.workspace = workspace
             if git_branch is not None or binding_changed:
                 meta.git_branch = git_branch
+                # The base describes that branch, so a rebind to a new
+                # branch replaces it (including clearing a stale one).
+                meta.git_base_branch = git_base_branch
             return meta
 
         meta = run_write_transaction(self._session_immediate, "set_host_id", write)
