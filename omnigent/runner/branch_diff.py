@@ -269,7 +269,41 @@ def branch_changes(
         "has_more": False,
         "base": base_name,
         "merge_base": merge_base,
+        "landed": _is_landed(root, base_name, data, has_untracked=bool(untracked.strip())),
     }
+
+
+def _is_landed(root: str, base: str, data: list[dict[str, Any]], *, has_untracked: bool) -> bool:
+    """
+    Report whether the branch's committed work is already on its base.
+
+    True when every changed path has the same content on the base tip as in
+    the branch's ``HEAD`` and nothing is uncommitted, which covers merge and
+    squash landings alike (the merge-base does not move after a squash).
+
+    :param root: Absolute workspace directory.
+    :param base: Base branch name.
+    :param data: The branch's changed-file entries.
+    :param has_untracked: Whether untracked files exist.
+    :returns: ``True`` when the task has landed.
+    """
+    if not data or has_untracked:
+        return False
+    rc, dirty = _git(root, "status", "--porcelain", "--untracked-files=no")
+    if rc != 0 or dirty.strip():
+        return False
+    for candidate in (base, f"origin/{base}"):
+        if _commit_exists(root, candidate):
+            paths: list[str] = []
+            for entry in data:
+                paths.append(str(entry["path"]))
+                if entry.get("previous_path"):
+                    paths.append(str(entry["previous_path"]))
+            rc, _ = _git(
+                root, "diff", "--quiet", "--end-of-options", candidate, "HEAD", "--", *paths
+            )
+            return rc == 0
+    return False
 
 
 def branch_file_diff(

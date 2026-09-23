@@ -52,6 +52,35 @@ function branchDiffSearch(search: string, path?: string): string {
  * @param props See {@link WorktreesPanelProps}.
  * @returns The worktree list, or an explanatory empty state.
  */
+type TaskStage = "input" | "running" | "review" | "landed" | "idle";
+
+/** Board sections, in display order. */
+const STAGES: { stage: TaskStage; label: string }[] = [
+  { stage: "input", label: "Needs input" },
+  { stage: "running", label: "Running" },
+  { stage: "review", label: "Ready for review" },
+  { stage: "landed", label: "Landed" },
+  { stage: "idle", label: "No changes yet" },
+];
+
+/**
+ * Place a task on the board.
+ *
+ * @param child - The worktree sub-agent.
+ * @param changes - Its branch changes, when loaded.
+ * @returns The board section it belongs to.
+ */
+export function taskStage(
+  child: ChildSessionInfo,
+  changes: { landed: boolean; data: unknown[] } | undefined,
+): TaskStage {
+  if (child.pending_elicitations_count > 0) return "input";
+  if (child.busy) return "running";
+  if (changes?.landed) return "landed";
+  if ((changes?.data.length ?? 0) > 0) return "review";
+  return "idle";
+}
+
 /** Display title of a worktree task. */
 function taskTitle(child: ChildSessionInfo): string {
   return child.task_summary || child.session_name || child.title || child.id;
@@ -76,17 +105,32 @@ export function WorktreesPanel({ conversationId, sessions }: WorktreesPanelProps
       </div>
     );
   }
+  // Board: group tasks by where they stand, most urgent first.
+  const stages = worktrees.map((child, index) => taskStage(child, branchLists[index]?.data));
   return (
-    <ul aria-label="Worktrees" className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
-      {worktrees.map((child) => (
-        <WorktreeRow
-          key={child.id}
-          child={child}
-          isActive={child.id === conversationId}
-          overlaps={overlaps.get(child.id)}
-        />
-      ))}
-    </ul>
+    <div aria-label="Worktrees" className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
+      {STAGES.map(({ stage, label }) => {
+        const tasks = worktrees.filter((_, index) => stages[index] === stage);
+        if (tasks.length === 0) return null;
+        return (
+          <section key={stage} aria-label={label} data-testid={`worktree-stage-${stage}`}>
+            <h3 className="sticky top-0 z-10 bg-card px-2 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {label} <span className="tabular-nums">{tasks.length}</span>
+            </h3>
+            <ul>
+              {tasks.map((child) => (
+                <WorktreeRow
+                  key={child.id}
+                  child={child}
+                  isActive={child.id === conversationId}
+                  overlaps={overlaps.get(child.id)}
+                />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
   );
 }
 

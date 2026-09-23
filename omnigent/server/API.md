@@ -140,7 +140,9 @@ Query parameters:
 ```
 
 `status` is one of `created`, `modified`, `deleted`, `renamed`; renames carry
-`previous_path`. When the runner is offline, the session's host (for a
+`previous_path`. `landed` is `true` once every changed path has the branch's
+content on the base tip and nothing is uncommitted. That holds after a merge or
+a squash; the merge-base does not move after a squash. When the runner is offline, the session's host (for a
 sub-agent: its nearest host-bound ancestor's host) serves the same payload.
 
 ```
