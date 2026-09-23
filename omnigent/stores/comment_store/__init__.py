@@ -48,6 +48,9 @@ class CommentStore(ABC):
         end_index: int,
         anchor_content: str | None = None,
         created_by: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        side: str | None = None,
     ) -> Comment:
         """Create and persist a new comment.
 
@@ -65,6 +68,9 @@ class CommentStore(ABC):
             not provided.
         :param created_by: Email of the creating user, e.g.
             ``"alice@example.com"``. ``None`` in single-user mode.
+        :param start_line: 1-based first line of the anchor, if known.
+        :param end_line: 1-based last line of the anchor (inclusive).
+        :param side: Diff side, ``"before"`` or ``"after"``, if in a diff.
         :returns: The newly created :class:`Comment`.
         """
         ...

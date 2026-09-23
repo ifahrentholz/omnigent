@@ -37,6 +37,9 @@ def _to_entity(row: SqlComment) -> Comment:
         updated_at=row.updated_at,
         anchor_content=row.anchor_content,
         created_by=row.created_by,
+        start_line=row.start_line,
+        end_line=row.end_line,
+        side=row.side,
     )
 
 
@@ -85,6 +88,9 @@ class SqlAlchemyCommentStore(CommentStore):
         end_index: int,
         anchor_content: str | None = None,
         created_by: str | None = None,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        side: str | None = None,
     ) -> Comment:
         """Create and persist a new comment. See base class for contract."""
         # One clock read for both timestamps so a never-edited comment's
@@ -107,6 +113,9 @@ class SqlAlchemyCommentStore(CommentStore):
                 updated_at=created_us,
                 anchor_content=anchor_content,
                 created_by=created_by,
+                start_line=start_line,
+                end_line=end_line,
+                side=side,
             )
             session.add(row)
             return _to_entity(row)
