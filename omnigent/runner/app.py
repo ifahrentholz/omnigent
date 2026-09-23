@@ -1868,6 +1868,23 @@ def unregister_subagent_work_for_session(session_id: str) -> None:
     _subagent_work_by_parent.pop(session_id, None)
 
 
+def count_active_subagent_work(parent_session_id: str, *, exclude_child: str | None = None) -> int:
+    """
+    Count a parent's sub-agent dispatches that have not finished yet.
+
+    :param parent_session_id: Parent session id, e.g. ``"conv_parent123"``.
+    :param exclude_child: Child session id to leave out, e.g. the child a
+        continuation is about to reuse.
+    :returns: Number of launching, running or waiting dispatches.
+    """
+    return sum(
+        1
+        for entry in list_subagent_work(parent_session_id)
+        if entry.status not in _SUBAGENT_TERMINAL_STATUSES
+        and entry.child_session_id != exclude_child
+    )
+
+
 def list_subagent_work(parent_session_id: str) -> list[_SubagentWorkEntry]:
     """
     List sub-agent work registered by a parent session.

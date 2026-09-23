@@ -2705,6 +2705,19 @@ async def _execute_subagent_tool_unlocked(
         if isinstance(existing, str):
             return existing
     assert not isinstance(existing, str)
+    running_cap = getattr(agent_spec, "max_running_subagents", None)
+    if isinstance(running_cap, int) and running_cap > 0:
+        existing_id = existing.get("id") if existing is not None else None
+        active = _runner_app.count_active_subagent_work(
+            conversation_id,
+            exclude_child=existing_id if isinstance(existing_id, str) else None,
+        )
+        if active >= running_cap:
+            return (
+                f"Error: {active} sub-agents are already running (max_running_subagents="
+                f"{running_cap}). Wait for one to finish (its result arrives in your inbox) "
+                f"before dispatching {sub_agent_name!r} again."
+            )
     created_child = False
     child_worktree: dict[str, object] = {}
     child_wrapper_label: str | None = None
