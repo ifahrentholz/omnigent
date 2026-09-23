@@ -10439,6 +10439,9 @@ def _child_session_summary_from_conversation(
         # conversation label rather than a new column.
         routed_model=conv.model_override if routing_decision_id is not None else None,
         routing_decision_id=routing_decision_id,
+        workspace=conv.workspace,
+        git_branch=conv.git_branch,
+        git_base_branch=conv.git_base_branch,
     )
 
 

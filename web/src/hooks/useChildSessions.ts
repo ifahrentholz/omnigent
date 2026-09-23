@@ -61,6 +61,12 @@ export interface ChildSessionInfo {
    * not routed (routing off, or a server that predates the field).
    */
   routed_model?: string | null;
+  /** Child working directory, e.g. its git worktree path; ``null`` when shared. */
+  workspace?: string | null;
+  /** Branch of the child's own worktree, e.g. ``"omni/login-a1b2c3"``. */
+  git_branch?: string | null;
+  /** Ref the worktree branch forked from, e.g. ``"main"``. */
+  git_base_branch?: string | null;
 }
 
 /**
@@ -81,6 +87,9 @@ interface ChildSessionWire {
   last_message_preview?: string | null;
   pending_elicitations_count?: number;
   routed_model?: string | null;
+  workspace?: string | null;
+  git_branch?: string | null;
+  git_base_branch?: string | null;
 }
 
 interface ChildSessionsResponse {
@@ -198,6 +207,9 @@ export async function fetchChildSessions(sessionId: string): Promise<ChildSessio
     last_message_preview: row.last_message_preview ?? null,
     pending_elicitations_count: row.pending_elicitations_count ?? 0,
     routed_model: row.routed_model ?? null,
+    workspace: row.workspace ?? null,
+    git_branch: row.git_branch ?? null,
+    git_base_branch: row.git_base_branch ?? null,
   }));
 }
 
