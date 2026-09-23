@@ -197,6 +197,7 @@ class _ConversationStore:
         host_id: str,
         workspace: str | None = None,
         git_branch: str | None = None,
+        git_base_branch: str | None = None,
     ) -> Conversation:
         """Set a conversation's host placement fields."""
         conv = self._conversations[conversation_id]
@@ -205,6 +206,8 @@ class _ConversationStore:
             conv.workspace = workspace
         if git_branch is not None:
             conv.git_branch = git_branch
+        if git_base_branch is not None:
+            conv.git_base_branch = git_base_branch
         return conv
 
     def append(
