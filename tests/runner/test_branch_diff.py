@@ -196,3 +196,20 @@ def test_host_fallback_serves_the_same_payload(task_repo: Path) -> None:
     with pytest.raises(WorkspaceReaderError) as excinfo:
         reader.branch_changes("no-such-base")
     assert excinfo.value.status == 400
+
+
+def test_landed_after_squash_into_base(task_repo: Path) -> None:
+    """A branch whose work reached the base (here: squashed) reports landed."""
+    assert branch_changes(str(task_repo), base="main")["landed"] is False
+    _git(task_repo, "add", "-A")
+    _git(task_repo, "commit", "-q", "-m", "wrap up")
+    assert branch_changes(str(task_repo), base="main")["landed"] is False
+
+    main_wt = task_repo.parent / "main-checkout"
+    _git(task_repo, "worktree", "add", "-q", str(main_wt), "main")
+    _git(main_wt, "merge", "-q", "--squash", "task")
+    _git(main_wt, "commit", "-q", "-m", "land task")
+
+    result = branch_changes(str(task_repo), base="main")
+    assert result["data"], "the fork point did not move, so the list stays"
+    assert result["landed"] is True

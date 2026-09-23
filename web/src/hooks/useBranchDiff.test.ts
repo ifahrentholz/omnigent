@@ -64,6 +64,7 @@ describe("fetchBranchChanges", () => {
       reason: "workspace is not a git repository",
       base: null,
       mergeBase: null,
+      landed: false,
       data: [],
     });
   });
