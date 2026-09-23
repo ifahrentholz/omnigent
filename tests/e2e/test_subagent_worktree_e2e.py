@@ -63,12 +63,17 @@ def _write_orchestrator_yaml(tmp_path: Path) -> Path:
                 "executor:",
                 "  harness: openai-agents",
                 f"  model: {_PARENT_MODEL}",
+                "os_env:",
+                "  type: caller_process",
+                "  sandbox:",
+                "    type: none",
                 "prompt: Dispatch the worker sub-agent.",
                 "tools:",
                 "  worker:",
                 "    type: agent",
                 "    description: Test worker.",
                 "    worktree: true",
+                "    os_env: inherit",
                 "    executor:",
                 "      harness: openai-agents",
                 f"      model: {_WORKER_MODEL}",
@@ -215,6 +220,37 @@ def test_worker_subagent_runs_in_its_own_worktree(
 
         assert child["host_id"] is None, "a child must not own the parent's host"
         _wait_for_text(http_client, child["id"], _MARKER)
+
+        # Review view: committed + uncommitted + untracked changes of the
+        # task branch since it forked from the parent's branch.
+        git = [
+            "git",
+            "-C",
+            str(worktree),
+            "-c",
+            "user.name=e2e",
+            "-c",
+            "user.email=e2e@example.com",
+        ]
+        (worktree / "README.md").write_text("hello\nfrom the worker\n")
+        subprocess.run([*git, "commit", "-q", "-am", "worker commit"], check=True)
+        (worktree / "README.md").write_text("hello\nfrom the worker\nuncommitted\n")
+        (worktree / "new.txt").write_text("fresh\n")
+        changes = http_client.get(f"/v1/sessions/{child['id']}/resources/git/changes")
+        assert changes.status_code == 200, changes.text
+        body = changes.json()
+        assert body["base"] == "main"
+        by_path = {entry["path"]: entry for entry in body["data"]}
+        assert set(by_path) == {"README.md", "new.txt"}
+        assert (by_path["README.md"]["lines_added"], by_path["README.md"]["lines_removed"]) == (
+            2,
+            0,
+        )
+        assert by_path["new.txt"]["status"] == "created"
+        diff = http_client.get(f"/v1/sessions/{child['id']}/resources/git/diff/README.md")
+        assert diff.status_code == 200, diff.text
+        assert diff.json()["before"] == "hello\n"
+        assert diff.json()["after"] == "hello\nfrom the worker\nuncommitted\n"
 
         # Stopping the worker must not tear down the orchestrator's runner:
         # the child shares it, so the parent stays online afterwards.
