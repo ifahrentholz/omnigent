@@ -190,6 +190,8 @@ def test_worker_subagent_runs_in_its_own_worktree(
         branch = child["git_branch"]
         worktree = Path(child["workspace"])
         assert isinstance(branch, str) and branch.startswith("omni/login-"), child
+        # The parent's checked-out branch is recorded as the diff base.
+        assert child["git_base_branch"] == "main", child
         assert worktree != repo.resolve()
         assert worktree.is_dir(), f"child worktree {worktree} missing on disk"
         head = subprocess.run(

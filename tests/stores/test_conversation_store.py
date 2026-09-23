@@ -3314,6 +3314,36 @@ def test_set_host_id(
     assert fetched.workspace == "/Users/corey/projects/myapp"
 
 
+def test_git_base_branch_follows_git_branch(
+    conversation_store: SqlAlchemyConversationStore,
+    db_uri: str,
+) -> None:
+    """
+    The worktree base is stored on create and rewritten with its branch.
+
+    A rebind to a new branch without a base must not keep the previous
+    branch's base, and a bind without a branch leaves both untouched.
+    """
+    host_id = "3a8753b34a61b09af35a01136d40fad0"
+    _register_host(db_uri, host_id)
+    conv = conversation_store.create_conversation(
+        workspace="/w/repo-worktrees/a",
+        git_branch="omni/a",
+        git_base_branch="main",
+    )
+    assert conversation_store.get_conversation(conv.id).git_base_branch == "main"
+
+    conversation_store.set_host_id(conv.id, host_id)
+    assert conversation_store.get_conversation(conv.id).git_base_branch == "main"
+
+    conversation_store.set_host_id(conv.id, host_id, "/w/repo-worktrees/b", "omni/b")
+    rebound = conversation_store.get_conversation(conv.id)
+    assert (rebound.git_branch, rebound.git_base_branch) == ("omni/b", None)
+
+    conversation_store.clear_host_binding(conv.id)
+    assert conversation_store.get_conversation(conv.id).git_base_branch is None
+
+
 def test_set_host_id_missing_conversation_raises(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:

@@ -735,6 +735,8 @@ class SqlConversationMetadata(OmnigentBase):
     # Required when host_id is set; enforced by check constraint below.
     workspace: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     git_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Ref the created worktree branch forked from; NULL when unknown.
+    git_base_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Live-state columns, written by the replica holding the runner
     # tunnel so any replica can serve the sidebar's live fields.
     # Writes must never bump conversations.updated_at (it drives
