@@ -8398,10 +8398,18 @@ describe("chatStore — handleSessionEvent (resource events)", () => {
       expect(spy).toHaveBeenCalledWith({
         queryKey: ["workspace-environment", "conv_abc"],
       });
-      // 5 = the four filesystem-view keys + workspace-environment, all from
-      // ONE debounced flush (the two events above coalesced). 10 would mean
-      // the debounce broke and each event flushed separately.
-      expect(spy).toHaveBeenCalledTimes(5);
+      // The task-branch review list and its diffs ("vs base") refresh too.
+      expect(spy).toHaveBeenCalledWith({
+        queryKey: ["workspace-branch-changes", "conv_abc"],
+      });
+      expect(spy).toHaveBeenCalledWith({
+        queryKey: ["branch-file-diff", "conv_abc"],
+      });
+      // 7 = the four filesystem-view keys + the two branch-diff keys +
+      // workspace-environment, all from ONE debounced flush (the two events
+      // above coalesced). 14 would mean the debounce broke and each event
+      // flushed separately.
+      expect(spy).toHaveBeenCalledTimes(7);
       spy.mockRestore();
     });
   });
