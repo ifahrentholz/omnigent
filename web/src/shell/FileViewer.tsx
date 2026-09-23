@@ -85,6 +85,7 @@ import {
   type Comment,
   useAddComment,
   useComments,
+  lineRange,
   useDeleteComment,
   useUpdateComment,
 } from "@/hooks/useComments";
@@ -1698,6 +1699,14 @@ function FileViewerBody({
             onCopyCommentLink={copyCommentLink}
             onAddComment={(body) => {
               if (activeSelection == null) return;
+              // Offsets index into the current file (the diff's "after" side);
+              // line numbers let the agent find the spot as `path:L12`.
+              const anchorText =
+                isPdf || isImage || isBinary
+                  ? null
+                  : viewMode === "diff"
+                    ? diffQuery.data?.after
+                    : fileQuery.data?.content;
               addComment.mutate(
                 {
                   path,
@@ -1705,6 +1714,10 @@ function FileViewerBody({
                   end_index: activeSelection.end_index,
                   body,
                   anchor_content: activeSelection.anchor_content,
+                  ...(typeof anchorText === "string"
+                    ? lineRange(anchorText, activeSelection.start_index, activeSelection.end_index)
+                    : {}),
+                  ...(viewMode === "diff" ? { side: "after" as const } : {}),
                 },
                 { onSuccess: () => setActiveSelection(null) },
               );

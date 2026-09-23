@@ -192,3 +192,45 @@ async def test_send_comments_not_found(client: httpx.AsyncClient, session_id: st
         json={"comment_ids": ["nonexistent_id"]},
     )
     assert resp.status_code == 404
+
+
+# ── Line anchors ─────────────────────────────────────────────────────
+
+
+async def test_line_anchor_round_trips_and_reaches_the_agent(
+    client: httpx.AsyncClient, session_id: str
+) -> None:
+    """A line-anchored comment tells the agent L12–14, not character offsets."""
+    added = await client.post(
+        f"/v1/sessions/{session_id}/comments",
+        json=_comment_payload(start_line=12, end_line=14, side="after"),
+    )
+    assert added.status_code == 200, added.text
+    body = added.json()
+    assert (body["start_line"], body["end_line"], body["side"]) == (12, 14, "after")
+
+    removed = await client.post(
+        f"/v1/sessions/{session_id}/comments",
+        json=_comment_payload(body="Keep this check", start_line=7, side="before"),
+    )
+    legacy = await client.post(f"/v1/sessions/{session_id}/comments", json=_comment_payload())
+
+    sent = await client.post(
+        f"/v1/sessions/{session_id}/comments/send",
+        json={"comment_ids": [body["id"], removed.json()["id"], legacy.json()["id"]]},
+    )
+    message = sent.json()["formatted_message"]
+    assert "(L12–14): Fix the import" in message
+    assert "(L7, removed line): Keep this check" in message
+    assert "(offset 0–10): Fix the import" in message
+
+
+async def test_line_anchor_rejects_inverted_range(
+    client: httpx.AsyncClient, session_id: str
+) -> None:
+    """An end line before the start line is a client bug, not a comment."""
+    resp = await client.post(
+        f"/v1/sessions/{session_id}/comments",
+        json=_comment_payload(start_line=9, end_line=3),
+    )
+    assert resp.status_code == 422

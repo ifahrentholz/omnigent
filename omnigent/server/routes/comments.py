@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Request
@@ -51,7 +51,7 @@ def _format_message(comments: list[Comment]) -> str:
         lines.append(f"File: {path}")
         for c in sorted(by_path[path], key=lambda c: c.start_index):
             anchor = f'"{c.anchor_content.strip()}" ' if c.anchor_content else ""
-            lines.append(f"• {anchor}(offset {c.start_index}–{c.end_index}): {c.body}")
+            lines.append(f"• {anchor}({_location(c)}): {c.body}")
 
     return "\n".join(lines)
 
@@ -122,6 +122,24 @@ async def _deliver_message(request: Request, session_id: str, text: str) -> None
         )
 
 
+def _location(comment: Comment) -> str:
+    """Describe where a comment sits, preferring line numbers.
+
+    :param comment: The comment.
+    :returns: E.g. ``"L12–14"``, ``"L7, removed line"`` or, for comments
+        without a line anchor, ``"offset 40–52"``.
+    """
+    if comment.start_line is None:
+        return f"offset {comment.start_index}–{comment.end_index}"
+    end = comment.end_line or comment.start_line
+    where = (
+        f"L{comment.start_line}" if end == comment.start_line else f"L{comment.start_line}–{end}"
+    )
+    if comment.side == "before":
+        where += ", removed line" if end == comment.start_line else ", removed lines"
+    return where
+
+
 # ── Request models ─────────────────────────────────────────────────────────────
 
 
@@ -137,6 +155,11 @@ class AddCommentRequest(BaseModel):
         within the file where the anchor range ends.
     :param anchor_content: Plain-text snapshot of the selected range, used
         to re-anchor the comment after file edits. ``None`` if not provided.
+    :param start_line: 1-based first line of the selection, when the client
+        knows it; the agent then gets ``path:L12`` instead of offsets.
+    :param end_line: 1-based last line of the selection (inclusive).
+    :param side: ``"after"`` (current file) or ``"before"`` (a removed line in
+        a diff); ``None`` outside a diff.
     """
 
     path: str
@@ -144,6 +167,9 @@ class AddCommentRequest(BaseModel):
     start_index: int
     end_index: int
     anchor_content: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    side: Literal["before", "after"] | None = None
 
     @model_validator(mode="after")
     def _validate_range(self) -> AddCommentRequest:
@@ -156,6 +182,12 @@ class AddCommentRequest(BaseModel):
             raise ValueError("start_index must be >= 0")
         if self.end_index < self.start_index:
             raise ValueError("end_index must be >= start_index")
+        if self.start_line is not None and self.start_line < 1:
+            raise ValueError("start_line must be >= 1")
+        if self.end_line is not None and (
+            self.start_line is None or self.end_line < self.start_line
+        ):
+            raise ValueError("end_line needs start_line and must be >= start_line")
         return self
 
 
@@ -305,6 +337,9 @@ def create_comments_router(
             start_index=body.start_index,
             end_index=body.end_index,
             anchor_content=body.anchor_content,
+            start_line=body.start_line,
+            end_line=body.end_line,
+            side=body.side,
             # Map the single-user "local" sentinel to None (matching the
             # sessions/messages write paths) so single-user comments record
             # no author and stay editable/deletable by any editor — both the

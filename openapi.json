@@ -27,16 +27,58 @@
             "title": "End Index",
             "type": "integer"
           },
+          "end_line": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "1-based last line of the selection (inclusive).",
+            "title": "End Line"
+          },
           "path": {
             "description": "File path relative to workspace root, e.g. `\"src/App.tsx\"`.",
             "title": "Path",
             "type": "string"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "enum": [
+                  "before",
+                  "after"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`\"after\"` (current file) or `\"before\"` (a removed line in a diff); `None` outside a diff.",
+            "title": "Side"
           },
           "start_index": {
             "description": "0-based absolute character offset (inclusive) within the file where the anchor range begins.",
             "format": "int64",
             "title": "Start Index",
             "type": "integer"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "1-based first line of the selection, when the client knows it; the agent then gets `path:L12` instead of offsets.",
+            "title": "Start Line"
           }
         },
         "required": [

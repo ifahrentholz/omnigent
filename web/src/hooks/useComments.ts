@@ -31,6 +31,36 @@ export interface Comment {
   updated_at: number;
   anchor_content: string | null;
   created_by: string | null;
+  /** 1-based first line of the anchor; absent on comments made before line anchoring. */
+  start_line?: number | null;
+  /** 1-based last line of the anchor (inclusive). */
+  end_line?: number | null;
+  /** Diff side: "after" (current file) or "before" (a removed line). */
+  side?: "before" | "after" | null;
+}
+
+/**
+ * 1-based line numbers of a character range within `text`.
+ *
+ * @param text - The content the offsets index into (the "after" side).
+ * @param start - 0-based start offset (inclusive).
+ * @param end - 0-based end offset (exclusive).
+ * @returns `{start_line, end_line}`; a range ending right after a newline
+ *   does not count the following empty line.
+ */
+export function lineRange(
+  text: string,
+  start: number,
+  end: number,
+): { start_line: number; end_line: number } {
+  const lineAt = (offset: number) => {
+    let line = 1;
+    for (let i = 0; i < Math.min(offset, text.length); i++) if (text[i] === "\n") line++;
+    return line;
+  };
+  const start_line = lineAt(start);
+  const last = end > start ? end - 1 : start;
+  return { start_line, end_line: Math.max(start_line, lineAt(last)) };
 }
 
 // ── Query helpers ────────────────────────────────────────────────────────────
@@ -77,6 +107,9 @@ export function useAddComment(sessionId: string) {
       end_index: number;
       body: string;
       anchor_content?: string | null;
+      start_line?: number;
+      end_line?: number;
+      side?: "before" | "after";
     }) => {
       const res = await authenticatedFetch(
         `/v1/sessions/${encodeURIComponent(sessionId)}/comments`,
