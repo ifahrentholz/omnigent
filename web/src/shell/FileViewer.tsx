@@ -79,6 +79,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { downloadWorkspaceFile, useFileContent } from "@/hooks/useFileContent";
 import { useFileDiff } from "@/hooks/useFileDiff";
+import { useSession } from "@/hooks/useSession";
 import { DIFF_SOURCE_PARAM, useBranchChanges, useBranchFileDiff } from "@/hooks/useBranchDiff";
 import {
   type Comment,
@@ -423,6 +424,8 @@ function FileViewerBody({
       ? navigableFiles[currentNavIdx + 1]
       : null;
   const commentsQuery = useComments(conversationId, path);
+  // A sub-agent's review comments can go to its orchestrator instead.
+  const parentSessionId = useSession(conversationId).session?.parentSessionId ?? null;
   const addComment = useAddComment(conversationId);
   const updateComment = useUpdateComment(conversationId);
   const deleteComment = useDeleteComment(conversationId);
@@ -1711,6 +1714,15 @@ function FileViewerBody({
               const ids = openComments.map((c) => c.id);
               sender.mutate({ comment_ids: ids });
             }}
+            onAddressAllToParent={
+              canEdit && sender !== null && parentSessionId
+                ? () =>
+                    sender.mutate({
+                      comment_ids: openComments.map((c) => c.id),
+                      target_session_id: parentSessionId,
+                    })
+                : undefined
+            }
             onClickComment={(comment) => {
               handleSetActiveSelection({
                 start_index: comment.start_index,
