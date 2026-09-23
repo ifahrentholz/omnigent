@@ -147,6 +147,7 @@ from omnigent.server.routes._sessions.helpers import (
     _background_task_delivery_status,
     _build_actor,
     _build_skill_slash_command_policy_body,
+    _descendant_worktrees,
     _dispatch_skill_slash_command_to_runner,
     _evaluate_output_policy,
     _filesystem_attachment_in_history,
@@ -2591,6 +2592,28 @@ def register_events_routes(
         # unreachable host fails the delete (409) with the session
         # retained, so nothing irrecoverable may be destroyed first.
         # Git errors on a reachable host stay best-effort.
+        # The sub-agent rows go with this session (store cascade), so their
+        # worktrees must be removed now or they are orphaned on the host.
+        if delete_branch:
+            descendants = await asyncio.to_thread(
+                _descendant_worktrees, conversation_store, session_id
+            )
+            for descendant in descendants:
+                descendant_host = await asyncio.to_thread(
+                    _worktree_host_id, descendant, conversation_store
+                )
+                if descendant_host is None:
+                    continue
+                await _remove_session_worktree_best_effort(
+                    host_id=descendant_host,
+                    worktree_path=descendant.workspace,
+                    branch=descendant.git_branch,
+                    delete_branch=True,
+                    request=request,
+                    reason="session-delete-cascade",
+                    conversation_store=conversation_store,
+                    exclude_conversation_id=descendant.id,
+                )
         worktree_host_id = (
             await asyncio.to_thread(_worktree_host_id, conv, conversation_store)
             if delete_branch and conv.git_branch is not None

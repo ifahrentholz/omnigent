@@ -531,6 +531,32 @@ with `agent_id`). An explicit `worktree: true` fails instead of silently
 running unisolated. The tool result reports the created
 `worktree: {path, branch}`. Continuing an existing session keeps its worktree.
 
+#### Preparing worktrees: `.omnigent/worktree.yaml`
+
+A new worktree contains only the branch's tracked files. Commit a
+`.omnigent/worktree.yaml` to the repository to copy git-ignored local files
+from the main checkout and run a setup command in every new worktree, whether a
+sub-agent or the UI created it:
+
+```yaml
+copy:            # globs relative to the main checkout
+  - .env
+  - config/*.local.json
+setup: pnpm install --frozen-lockfile --prefer-offline
+setup_timeout: 60  # seconds, capped at 90
+```
+
+The setup runs on the host before the session starts. The worktree create has
+to answer within the server's timeout, so keep it short. Long cold installs
+belong in the agent's task. When setup fails or times out, the worktree and its
+new branch are removed again and the create reports the command's output.
+
+#### Cleaning up
+
+Deleting a session with `delete_branch=true` removes its worktree and branch,
+and the worktrees and branches of all its sub-agents as well. Archiving or
+closing a sub-agent keeps its worktree, so the branch stays reviewable.
+
 ### Capping running sub-agents
 
 `spawn_bounds` limits dispatches per turn. To bound how many sub-agents run
