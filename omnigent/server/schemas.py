@@ -815,6 +815,12 @@ class ChildSessionSummary(BaseModel):
         ``RoutingDecisionData.decision_id``. Read from the child's
         ``omnigent.routing.decision_id`` label, stamped when routing pins
         the model. ``None`` when the child was not routed.
+    :param workspace: The child's working directory, e.g. its git
+        worktree path. ``None`` when it runs in the parent's workspace.
+    :param git_branch: Branch of the child's server-created worktree,
+        e.g. ``"omni/login-a1b2c3"``; ``None`` without one.
+    :param git_base_branch: Ref that worktree branch forked from, e.g.
+        ``"main"``; ``None`` when unknown.
     """
 
     id: str
@@ -838,6 +844,9 @@ class ChildSessionSummary(BaseModel):
     pending_elicitations_count: int = 0
     routed_model: str | None = None
     routing_decision_id: str | None = None
+    workspace: str | None = None
+    git_branch: str | None = None
+    git_base_branch: str | None = None
 
 
 # ── Responses ───────────────────────────────────────────────────

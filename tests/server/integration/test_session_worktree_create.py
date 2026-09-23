@@ -525,6 +525,12 @@ async def test_sub_agent_child_gets_its_own_worktree(
     # stopping/archiving it would tear down the orchestrator's runner.
     assert child["host_id"] is None
 
+    # The Agents rail / Worktrees tab read the worktree off the child list.
+    listed = (await client.get(f"/v1/sessions/{parent['id']}/child_sessions")).json()["data"]
+    assert [(c["id"], c["git_branch"], c["git_base_branch"], c["workspace"]) for c in listed] == [
+        (child["id"], "omni/login-abc123", "feature/root", child["workspace"])
+    ]
+
     # Deleting the child removes its worktree through the parent's host.
     deleted = await client.delete(f"/v1/sessions/{child['id']}", params={"delete_branch": "true"})
     assert deleted.status_code in (200, 204), deleted.text
