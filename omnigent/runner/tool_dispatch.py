@@ -2474,7 +2474,82 @@ def _subagent_launching_message(agent: str, title: object, task_id: str) -> str:
     )
 
 
+# One lock per (parent, agent, title): concurrent named sends in one model
+# response would otherwise both miss the find-existing lookup and race to
+# create the same child; the loser got a hard 409 naming a duplicate title.
+_named_dispatch_locks: weakref.WeakValueDictionary[tuple[str, str, str], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _named_dispatch_lock(args: _JsonObject, conversation_id: str | None) -> asyncio.Lock | None:
+    """
+    Return the lock serializing named sends to one ``(agent, title)``.
+
+    :param args: Parsed ``sys_session_send`` arguments.
+    :param conversation_id: The parent session id.
+    :returns: The shared lock, or ``None`` for auto-titled and by-id sends,
+        which cannot collide on a name.
+    """
+    agent = args.get("agent")
+    title = args.get("title")
+    if not conversation_id or args.get("session_id"):
+        return None
+    if not isinstance(agent, str) or not agent or not isinstance(title, str) or not title:
+        return None
+    key = (conversation_id, agent, title)
+    lock = _named_dispatch_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _named_dispatch_locks[key] = lock
+    return lock
+
+
 async def _execute_subagent_tool(
+    args: _JsonObject,
+    *,
+    server_client: httpx.AsyncClient | None = None,
+    conversation_id: str | None = None,
+    agent_spec: AgentSpec | None = None,
+    publish_event: Callable[[str, _JsonObject], None] | None = None,
+    session_inbox: asyncio.Queue[_JsonObject] | None = None,
+) -> str:
+    """
+    Dispatch ``sys_session_send``, serializing sends to the same named child.
+
+    See :func:`_execute_subagent_tool_unlocked` for the dispatch contract.
+    A second concurrent send to one ``(agent, title)`` waits for the first
+    to create the child and then addresses that child: while its first
+    turn is still launching it gets the standard transient "still starting
+    ... retry" answer instead of a duplicate-title 409.
+
+    :param args: Parsed arguments from the LLM.
+    :param server_client: httpx client pointed at the Omnigent server.
+    :param conversation_id: Parent session/conversation ID.
+    :param agent_spec: Parent agent's :class:`AgentSpec`.
+    :param publish_event: Optional child-session discovery callback.
+    :param session_inbox: Parent session's inbox queue.
+    :returns: JSON child-session handle, or an error string.
+    """
+
+    async def _dispatch() -> str:
+        return await _execute_subagent_tool_unlocked(
+            args,
+            server_client=server_client,
+            conversation_id=conversation_id,
+            agent_spec=agent_spec,
+            publish_event=publish_event,
+            session_inbox=session_inbox,
+        )
+
+    lock = _named_dispatch_lock(args, conversation_id)
+    if lock is None:
+        return await _dispatch()
+    async with lock:
+        return await _dispatch()
+
+
+async def _execute_subagent_tool_unlocked(
     args: _JsonObject,
     *,
     server_client: httpx.AsyncClient | None = None,
