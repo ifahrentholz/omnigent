@@ -51,7 +51,15 @@ Click a file to open it in the task's branch diff. Add comments on lines, then:
 
 The worker addresses the comments in its worktree and commits again.
 
+## Preparing worktrees
+
+If tasks need git-ignored files (`.env`) or installed dependencies, commit a
+`.omnigent/worktree.yaml` to your repository. See
+[Preparing worktrees](../../docs/AGENT_YAML_SPEC.md#preparing-worktrees-omnigentworktreeyaml).
+
 ## Landing a task
 
 foreman never merges. Review the branch, then merge it, or ask the worker to
-push and open a PR, whichever fits your repository's workflow.
+push and open a PR, whichever fits your repository's workflow. Deleting the
+foreman session with "delete branch" also removes every task's worktree and
+branch.
