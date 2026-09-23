@@ -301,6 +301,9 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     # the specified sub-agent types. Defaults to False — session
     # reads stay always-on, but every write grant is explicit.
     spawn = bool(raw.get("spawn", False))
+    # Top-level ``worktree:`` flag: when this agent runs as a sub-agent,
+    # isolate each new session in its own git worktree.
+    worktree = _parse_worktree_flag(raw.get("worktree"))
     # Top-level ``agent_session_sharing:`` flag is the SOLE enabler of
     # the ``sys_session_share`` tool, independent of ``spawn`` /
     # ``tools.agents`` (and unrelated to server-API / CLI sharing).
@@ -344,8 +347,24 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         terminals=terminals,
         timers=timers,
         spawn=spawn,
+        worktree=worktree,
         agent_session_sharing=agent_session_sharing,
     )
+
+
+def _parse_worktree_flag(raw: object) -> bool:
+    """
+    Parse the top-level YAML ``worktree:`` flag.
+
+    :param raw: Raw YAML value; ``None`` when absent.
+    :returns: The flag, ``False`` when absent.
+    :raises ValueError: If the value is not a boolean.
+    """
+    if raw is None:
+        return False
+    if not isinstance(raw, bool):
+        raise ValueError(f"top-level worktree: must be a boolean; got {raw!r}")
+    return raw
 
 
 def _parse_llm(

@@ -284,6 +284,7 @@ class AgentTool(Tool):
         snapshot into the sub-session under the same name.
     :param max_sessions: Maximum concurrent named sub-sessions.
         ``None`` means unlimited.
+    :param worktree: Run each new sub-session in its own git worktree.
     """
 
     prompt: str | None = None
@@ -293,6 +294,7 @@ class AgentTool(Tool):
     pass_history: bool = False
     pass_histories: list[str] | None = None
     max_sessions: int | None = None  # Maximum concurrent named sessions; None = unlimited
+    worktree: bool = False
 
 
 @dataclass

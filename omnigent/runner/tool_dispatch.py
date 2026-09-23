@@ -57,6 +57,14 @@ from omnigent.models.model_override import (
     validate_model_override,
 )
 from omnigent.native.native_coding_agents import public_agent_name
+from omnigent.runner.subagent_worktree import (
+    build_worktree_create_fields,
+    resolve_worktree_mode,
+    subagent_branch_name,
+    worktree_args_from_create,
+    worktree_args_from_dispatch,
+    worktree_handle_fields,
+)
 from omnigent.runtime import pending_elicitations
 from omnigent.tools import ToolManager
 from omnigent.tools.base import Tool, ToolContext
@@ -1969,12 +1977,23 @@ async def _teardown_failed_child(
         return None
 
     last_error = ""
+    # A worktree created for this child is removed with it. The server
+    # refuses (409) when that host is unreachable; the phantom session
+    # matters more than the stray worktree, so fall back to a plain delete.
+    delete_params: dict[str, str] = {"delete_branch": "true"}
     for attempt in range(2):
         try:
             resp = await server_client.delete(
                 f"/v1/sessions/{child_session_id}",
+                params=delete_params,
                 timeout=30.0,
             )
+            if resp.status_code == 409 and delete_params:
+                delete_params = {}
+                resp = await server_client.delete(
+                    f"/v1/sessions/{child_session_id}",
+                    timeout=30.0,
+                )
         except httpx.HTTPError as exc:
             last_error = f"{type(exc).__name__}: {exc}"
         else:
@@ -2099,6 +2118,31 @@ async def _build_subagent_message_content(
         content.append({"type": block_type, "file_id": new_id})
 
     return CopyResult(content=content)
+
+
+def _is_child_name_collision(resp: httpx.Response) -> bool:
+    """
+    Tell a (parent, title) name clash apart from other 409 conflicts.
+
+    Worktree creation also answers 409 (e.g. the host is offline), which
+    must not be retried as an ordinal bump.
+
+    :param resp: A ``POST /v1/sessions`` response.
+    :returns: ``True`` for the store's duplicate-title conflict.
+    """
+    return resp.status_code == 409 and "name already exists" in resp.text
+
+
+def _subagent_spec_wants_worktree(sub_agent_name: str, agent_spec: AgentSpec | None) -> bool:
+    """
+    Report whether a sub-agent spec opts into per-dispatch worktree isolation.
+
+    :param sub_agent_name: Name of the sub-agent, e.g. ``"claude_code"``.
+    :param agent_spec: Parent agent's spec, or ``None``.
+    :returns: The sub-spec's ``worktree`` flag; ``False`` when absent.
+    """
+    # ``getattr``: sub-specs also arrive as structural stubs.
+    return getattr(_find_subagent_spec(sub_agent_name, agent_spec), "worktree", False) is True
 
 
 def _find_subagent_spec(sub_agent_name: str, agent_spec: AgentSpec | None) -> AgentSpec | None:
@@ -2469,6 +2513,11 @@ async def _execute_subagent_tool(
     except (ValueError, TypeError) as exc:
         return f"Error: sys_session_send invalid 'cost_budget': {exc}"
 
+    try:
+        worktree_args = worktree_args_from_dispatch(args)
+    except ValueError as exc:
+        return f"Error: sys_session_send invalid worktree options: {exc}"
+
     # By-session-id mode: post to an existing direct child instead of
     # spawning/continuing a named (agent, title) sub-agent.
     target_session_id = args.get("session_id")
@@ -2582,6 +2631,7 @@ async def _execute_subagent_tool(
             return existing
     assert not isinstance(existing, str)
     created_child = False
+    child_worktree: dict[str, object] = {}
     child_wrapper_label: str | None = None
     work_id = _runner_app.new_subagent_work_id()
     if existing is not None:
@@ -2844,11 +2894,49 @@ async def _execute_subagent_tool(
         _max_ordinal_retries = 5 if _auto_ordinal else 0
         _create_timeout_exc: httpx.ReadTimeout | None = None
         resp: httpx.Response | None = None
+        worktree_mode = resolve_worktree_mode(
+            worktree_args,
+            spec_default=_subagent_spec_wants_worktree(str(sub_agent_name), agent_spec),
+        )
         try:
             for _ordinal_attempt in range(_max_ordinal_retries + 1):
+                # Recomputed per attempt: the branch embeds the (possibly
+                # bumped) ordinal title.
+                worktree_fields = await build_worktree_create_fields(
+                    mode=worktree_mode,
+                    request=worktree_args,
+                    server_client=server_client,
+                    parent_session_id=conversation_id,
+                    branch_name=subagent_branch_name(str(session_name), work_id),
+                )
+                if isinstance(worktree_fields, str):
+                    return worktree_fields
+                if worktree_fields is not None:
+                    create_body.update(worktree_fields)
                 resp = await server_client.post("/v1/sessions", json=create_body, timeout=30.0)
                 if (
+                    worktree_mode == "auto"
+                    and worktree_fields is not None
+                    and 400 <= resp.status_code < 500
+                    and not _is_child_name_collision(resp)
+                ):
+                    # Best-effort isolation: a host/git failure (offline
+                    # host, unknown base ref) degrades to the shared
+                    # workspace instead of failing the dispatch.
+                    _logger.warning(
+                        "sub-agent worktree creation failed (%s %s); dispatching %r unisolated",
+                        resp.status_code,
+                        resp.text[:200],
+                        session_name,
+                        extra={"session_id": conversation_id},
+                    )
+                    worktree_mode = "off"
+                    for key in worktree_fields:
+                        create_body.pop(key, None)
+                    resp = await server_client.post("/v1/sessions", json=create_body, timeout=30.0)
+                if (
                     resp.status_code == 409
+                    and _is_child_name_collision(resp)
                     and _auto_ordinal
                     and _ordinal_attempt < _max_ordinal_retries
                 ):
@@ -2910,6 +2998,7 @@ async def _execute_subagent_tool(
             return "Error: server did not return child session_id"
         child_wrapper_label = _session_wrapper_label(child_data)
         created_child = True
+        child_worktree = worktree_handle_fields(child_data)
 
         # Attach a subagent_cost_budget policy to the child when requested.
         # Non-fatal: the child session is still usable without the budget.
@@ -3081,6 +3170,7 @@ async def _execute_subagent_tool(
             "title": session_name,
             "status": "launching",
             "message": _subagent_launching_message(sub_agent_name, session_name, child_session_id),
+            **child_worktree,
         }
     )
 
@@ -3370,6 +3460,7 @@ def _finalize_created_session(
             "agent_name": data.get("agent_name"),
             "title": title if isinstance(title, str) else None,
             "status": data.get("status") or "created",
+            **worktree_handle_fields(data),
         }
     )
 
@@ -3439,7 +3530,20 @@ async def _execute_session_create(
                 )
             }
         )
+    try:
+        worktree_args = worktree_args_from_create(args)
+    except ValueError as exc:
+        return json.dumps({"error": f"sys_session_create invalid worktree options: {exc}"})
     if has_config_path:
+        if worktree_args.requested or worktree_args.base_branch:
+            return json.dumps(
+                {
+                    "error": (
+                        "sys_session_create 'worktree' is supported only with "
+                        "'agent_id'; the 'config_path' create cannot carry it."
+                    )
+                }
+            )
         # The multipart create carries only the config bundle, so an effort
         # passed here would never reach the child. Refuse instead of dropping it.
         if args.get("reasoning_effort") is not None:
@@ -3469,6 +3573,21 @@ async def _execute_session_create(
         model=args.get("model"),
         reasoning_effort=args.get("reasoning_effort"),
     )
+    title = args.get("title")
+    worktree_fields = await build_worktree_create_fields(
+        mode=resolve_worktree_mode(worktree_args, spec_default=False),
+        request=worktree_args,
+        server_client=server_client,
+        parent_session_id=conversation_id,
+        branch_name=subagent_branch_name(
+            title if isinstance(title, str) and title else "session",
+            uuid.uuid4().hex,
+        ),
+    )
+    if isinstance(worktree_fields, str):
+        return json.dumps({"error": worktree_fields.removeprefix("Error: ")})
+    if worktree_fields is not None:
+        body.update(worktree_fields)
     try:
         resp = await server_client.post("/v1/sessions", json=body, timeout=30.0)
     except Exception as exc:  # noqa: BLE001

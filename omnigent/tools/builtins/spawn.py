@@ -211,6 +211,39 @@ def _spec_opts_into_harness_override(spec: Any) -> bool:
     return any(isinstance(entry, str) and entry for entry in raw_allowed)
 
 
+_WORKTREE_BASE_BRANCH_DESCRIPTION = (
+    "Optional ref the worktree branch forks from, e.g. 'main'. Implies "
+    "'worktree'. Omitted = your own branch (or the repo's current HEAD). "
+    "Uncommitted changes in your workspace are not carried over."
+)
+
+_WORKTREE_SEND_PROPERTIES: dict[str, Any] = {
+    "worktree": {
+        "type": "boolean",
+        "description": (
+            "Run the sub-agent in its own git worktree on a fresh branch, "
+            "so parallel workers never edit the same checkout. Applies only "
+            "when this send CREATES the session; a continued session keeps "
+            "its worktree. Omitted = the sub-agent spec's default. Fails "
+            "when your workspace is not a git repo on a bound host."
+        ),
+    },
+    "base_branch": {"type": "string", "description": _WORKTREE_BASE_BRANCH_DESCRIPTION},
+}
+
+_WORKTREE_CREATE_PROPERTIES: dict[str, Any] = {
+    "worktree": {
+        "type": "boolean",
+        "description": (
+            "Run the child in its own git worktree on a fresh branch. Only "
+            "valid with 'agent_id'. Fails when your workspace is not a git "
+            "repo on a bound host."
+        ),
+    },
+    "base_branch": {"type": "string", "description": _WORKTREE_BASE_BRANCH_DESCRIPTION},
+}
+
+
 def _build_sys_session_send_schema(
     sub_specs: dict[str, AgentSpec],
 ) -> dict[str, Any]:
@@ -307,19 +340,20 @@ def _build_sys_session_send_schema(
             "The user-input message to send to the sub-agent. The sub-agent "
             "treats this as the first user turn in its conversation. Pass a "
             "plain string for the normal contract, or pass "
-            "{input, purpose, model, harness, cost_budget} when a spec-level "
-            "policy requires explicit dispatch metadata, a per-dispatch model "
-            "override, an allowlisted harness override, or a per-subagent "
-            "cost budget."
+            "{input, purpose, model, harness, worktree, cost_budget} when a "
+            "spec-level policy requires explicit dispatch metadata, a "
+            "per-dispatch model override, an allowlisted harness override, "
+            "worktree isolation, or a per-subagent cost budget."
         )
         if harness_opt_in
         else (
             "The user-input message to send to the sub-agent. The sub-agent "
             "treats this as the first user turn in its conversation. Pass a "
             "plain string for the normal contract, or pass "
-            "{input, purpose, model, cost_budget} when a spec-level policy "
-            "requires explicit dispatch metadata, a per-dispatch model "
-            "override, or a per-subagent cost budget."
+            "{input, purpose, model, worktree, cost_budget} when a "
+            "spec-level policy requires explicit dispatch metadata, a "
+            "per-dispatch model override, worktree isolation, or a "
+            "per-subagent cost budget."
         )
     )
     return {
@@ -413,6 +447,7 @@ def _build_sys_session_send_schema(
                                         ),
                                     },
                                     **harness_property,
+                                    **_WORKTREE_SEND_PROPERTIES,
                                     "cost_budget": {
                                         "type": "object",
                                         "properties": {
@@ -1022,6 +1057,7 @@ class SysSessionCreateTool(Tool):
                                 "default."
                             ),
                         },
+                        **_WORKTREE_CREATE_PROPERTIES,
                     },
                     # Only the always-optional fields are listed in
                     # ``required`` (none): the agent_id-vs-config_path

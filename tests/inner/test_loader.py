@@ -203,6 +203,22 @@ class TestLoadFromDict(unittest.TestCase):
         self.assertIsInstance(a.tools["h"], AgentTool)
         self.assertEqual(a.tools["h"].max_sessions, 3)
 
+    def test_tools_agent_worktree(self):
+        """``worktree: true`` on a sub-agent tool isolates its sessions."""
+        a = load_agent_def(
+            {"name": "t", "tools": {"h": {"type": "agent", "prompt": "Help.", "worktree": True}}}
+        )
+        self.assertIs(a.tools["h"].worktree, True)
+        b = load_agent_def({"name": "t", "tools": {"h": {"type": "agent", "prompt": "Help."}}})
+        self.assertIs(b.tools["h"].worktree, False)
+
+    def test_tools_agent_worktree_rejects_non_bool(self):
+        """A non-boolean ``worktree`` fails loud instead of being coerced."""
+        with self.assertRaises(ValueError):
+            load_agent_def(
+                {"name": "t", "tools": {"h": {"type": "agent", "prompt": "H", "worktree": "yes"}}}
+            )
+
     def test_tools_agent_max_sessions_defaults_to_none(self):
         a = load_agent_def({"name": "t", "tools": {"h": {"type": "agent", "prompt": "Help."}}})
         self.assertIsInstance(a.tools["h"], AgentTool)
