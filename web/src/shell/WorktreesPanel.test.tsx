@@ -1,16 +1,46 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useBranchChanges } from "@/hooks/useBranchDiff";
 import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
+import { LandError, useLandBranch, useRequestPullRequest } from "@/hooks/useLandBranch";
+import type * as LandBranchModule from "@/hooks/useLandBranch";
 import { WorktreesPanel } from "./WorktreesPanel";
 
 vi.mock("@/hooks/useBranchDiff", async (importOriginal) => ({
   ...(await importOriginal<typeof BranchDiffModule>()),
   useBranchChanges: vi.fn(),
 }));
+
+vi.mock("@/hooks/useLandBranch", async (importOriginal) => ({
+  ...(await importOriginal<typeof LandBranchModule>()),
+  useLandBranch: vi.fn(),
+  useRequestPullRequest: vi.fn(),
+}));
+
+function mutation(overrides: Record<string, unknown> = {}) {
+  return {
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    isPending: false,
+    isSuccess: false,
+    isError: false,
+    data: undefined,
+    error: null,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.mocked(useLandBranch).mockReturnValue(
+    mutation() as unknown as ReturnType<typeof useLandBranch>,
+  );
+  vi.mocked(useRequestPullRequest).mockReturnValue(
+    mutation() as unknown as ReturnType<typeof useRequestPullRequest>,
+  );
+});
 
 afterEach(cleanup);
 
@@ -116,5 +146,48 @@ describe("WorktreesPanel", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText(/No sub-agent worktrees yet/)).toBeTruthy();
+  });
+
+  it("lands the branch with the chosen strategy", () => {
+    const land = mutation();
+    vi.mocked(useLandBranch).mockReturnValue(land as unknown as ReturnType<typeof useLandBranch>);
+    vi.mocked(useBranchChanges).mockReturnValue(branchResult([]));
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[child({ id: "conv_wt", git_branch: "omni/login-a1b2c3" })]}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    fireEvent.click(screen.getByRole("button", { name: "Land…" }));
+    fireEvent.change(screen.getByLabelText("Merge strategy"), { target: { value: "squash" } });
+    fireEvent.click(screen.getByRole("button", { name: "Land into main" }));
+
+    expect(vi.mocked(useLandBranch)).toHaveBeenCalledWith("conv_wt");
+    expect(land.mutate).toHaveBeenCalledWith({ strategy: "squash" }, expect.anything());
+  });
+
+  it("lists the conflicting files of a refused merge", () => {
+    vi.mocked(useLandBranch).mockReturnValue(
+      mutation({
+        isError: true,
+        error: new LandError("merging conflicts; nothing was changed", ["src/app.py"]),
+      }) as unknown as ReturnType<typeof useLandBranch>,
+    );
+    vi.mocked(useBranchChanges).mockReturnValue(branchResult([]));
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[child({ id: "conv_wt", git_branch: "omni/login-a1b2c3" })]}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    expect(screen.getByText("merging conflicts; nothing was changed")).toBeTruthy();
+    expect(screen.getByText("src/app.py")).toBeTruthy();
   });
 });

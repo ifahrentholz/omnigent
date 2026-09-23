@@ -59,7 +59,12 @@ If tasks need git-ignored files (`.env`) or installed dependencies, commit a
 
 ## Landing a task
 
-foreman never merges. Review the branch, then merge it, or ask the worker to
-push and open a PR, whichever fits your repository's workflow. Deleting the
+foreman never merges on its own. In the Worktrees view, expand a task and
+choose one of:
+
+- **Land…**: merge the branch into its base in your checkout, as a merge
+  commit or squashed. Both sides must be clean. A conflicting merge is
+  aborted and lists the files.
+- **Ask for PR**: the worker pushes its branch and opens a pull request. Deleting the
 foreman session with "delete branch" also removes every task's worktree and
 branch.
