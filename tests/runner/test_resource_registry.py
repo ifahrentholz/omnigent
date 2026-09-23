@@ -1926,3 +1926,23 @@ async def test_non_claude_terminal_never_acknowledges_billing_notice(
         on_tick()
 
     acknowledge.assert_not_called()
+
+
+def test_session_workspace_roots_the_primary_environment(tmp_path: Path) -> None:
+    """
+    A sub-agent child shares its parent's runner but lives in its own
+    worktree; its file panel must browse that worktree, not the runner root.
+    """
+    runner_root = tmp_path / "repo"
+    worktree = tmp_path / "repo-worktrees" / "omni-login"
+    runner_root.mkdir()
+    worktree.mkdir(parents=True)
+    reg = SessionResourceRegistry(runner_workspace=runner_root, per_session_workspace=True)
+
+    assert reg.compute_default_env_root("conv_parent", None) != str(worktree.resolve())
+    reg.set_session_workspace("conv_child", str(worktree))
+    assert reg.compute_default_env_root("conv_child", None) == str(worktree.resolve())
+    env = reg.resolve_environment("conv_child", DEFAULT_ENVIRONMENT_ID)
+    assert Path(env.cwd).resolve() == worktree.resolve()
+    # Other sessions on the same runner keep the runner-derived root.
+    assert reg.compute_default_env_root("conv_parent", None) != str(worktree.resolve())

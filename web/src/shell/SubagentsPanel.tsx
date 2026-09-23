@@ -31,6 +31,7 @@ import {
   PlusIcon,
   ScanSearchIcon,
   SearchIcon,
+  GitBranchIcon,
 } from "lucide-react";
 import { Link, useLocation } from "@/lib/routing";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +73,7 @@ import {
   type AgentStatus,
 } from "./subagentStatus";
 import { AddAgentDialog } from "./AddAgentDialog";
+import { WorktreesPanel } from "./WorktreesPanel";
 
 const CODEX_NATIVE_SUBAGENT_WRAPPER = "codex-native-ui-subagent";
 const OPENCODE_NATIVE_SUBAGENT_WRAPPER = "opencode-native-ui-subagent";
@@ -91,7 +93,7 @@ interface SubagentsPanelProps {
   rootSessionId: string;
 }
 
-type ViewMode = "list" | "graph";
+type ViewMode = "list" | "graph" | "worktrees";
 
 export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanelProps) {
   const { children, isLoading, error } = useChildSessions(rootSessionId);
@@ -121,6 +123,15 @@ export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanel
         <div className="flex flex-1 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
           Failed to load agents.
         </div>
+      </div>
+    );
+  }
+
+  if (viewMode === "worktrees") {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
+        <ViewModeToggle viewMode={viewMode} onViewModeChange={setViewMode} />
+        <WorktreesPanel conversationId={conversationId} sessions={children} />
       </div>
     );
   }
@@ -206,6 +217,16 @@ function ViewModeToggle({
           data-testid="view-mode-graph"
         >
           <NetworkIcon className="size-3.5" />
+        </Button>
+        <Button
+          variant={viewMode === "worktrees" ? "secondary" : "ghost"}
+          size="icon-xs"
+          onClick={() => onViewModeChange("worktrees")}
+          aria-label="Worktrees view"
+          title="Worktrees: what each sub-agent's branch changed"
+          data-testid="view-mode-worktrees"
+        >
+          <GitBranchIcon className="size-3.5" />
         </Button>
       </div>
     </div>
