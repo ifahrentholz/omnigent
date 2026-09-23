@@ -160,6 +160,7 @@ def test_worker_subagent_runs_in_its_own_worktree(
             },
             {"text": "Dispatched the worker."},
             {"text": f"Worker reported {_MARKER}."},
+            {"text": "Routing the review comments to the worker."},
         ],
         key=_PARENT_MODEL,
     )
@@ -258,6 +259,27 @@ def test_worker_subagent_runs_in_its_own_worktree(
         )
         assert content.status_code == 200, content.text
         assert "fresh" in json.dumps(content.json())
+
+        # Review comments on the worker's worktree go to the orchestrator.
+        comment = http_client.post(
+            f"/v1/sessions/{child['id']}/comments",
+            json={
+                "path": "README.md",
+                "body": "Say goodbye too",
+                "start_index": 0,
+                "end_index": 5,
+                "anchor_content": "hello",
+            },
+        )
+        assert comment.status_code == 200, comment.text
+        sent = http_client.post(
+            f"/v1/sessions/{child['id']}/comments/send",
+            json={"comment_ids": [comment.json()["id"]], "target_session_id": session_id},
+            timeout=60.0,
+        )
+        assert sent.status_code == 200, sent.text
+        _wait_for_text(http_client, session_id, "Review comments on sub-agent")
+        _wait_for_text(http_client, session_id, "Say goodbye too")
 
         # Stopping the worker must not tear down the orchestrator's runner:
         # the child shares it, so the parent stays online afterwards.

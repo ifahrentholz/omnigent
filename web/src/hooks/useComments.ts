@@ -159,7 +159,12 @@ export function useUpdateComment(sessionId: string) {
 export function useSendCommentsToAgent(sessionId: string, agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { comment_ids: string[]; instruction?: string }) => {
+    mutationFn: async (payload: {
+      comment_ids: string[];
+      instruction?: string;
+      /** Deliver server-side into this session (the comments' own or an ancestor). */
+      target_session_id?: string;
+    }) => {
       const res = await authenticatedFetch(
         `/v1/sessions/${encodeURIComponent(sessionId)}/comments/send`,
         {
@@ -172,10 +177,12 @@ export function useSendCommentsToAgent(sessionId: string, agentId: string) {
       return (await res.json()) as {
         formatted_message: string;
         sent_comment_ids: string[];
+        /** Set when the server already delivered the message. */
+        delivered_to?: string;
       };
     },
     onSuccess: (data) => {
-      void useChatStore.getState().send(data.formatted_message, agentId);
+      if (!data.delivered_to) void useChatStore.getState().send(data.formatted_message, agentId);
       void queryClient.invalidateQueries({
         queryKey: ["comments", sessionId],
       });
