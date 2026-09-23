@@ -36,6 +36,11 @@ class Comment:
     :param created_by: Email of the user who created the comment,
         e.g. ``"alice@example.com"``. ``None`` for legacy comments created
         before per-user attribution was added, or in single-user mode.
+    :param start_line: 1-based first line of the anchor, or ``None`` when
+        unknown (older comments).
+    :param end_line: 1-based last line of the anchor (inclusive).
+    :param side: Diff side the comment was made on, ``"before"`` or
+        ``"after"``; ``None`` outside a diff.
     """
 
     id: str
@@ -49,6 +54,9 @@ class Comment:
     updated_at: int  # unix timestamp (microseconds) of last body/status mutation
     anchor_content: str | None = None
     created_by: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    side: str | None = None
 
 
 @dataclasses.dataclass
