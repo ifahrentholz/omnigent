@@ -7,7 +7,7 @@
 // committed, uncommitted and untracked. A worker that commits in its
 // worktree keeps its changes visible here.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "@/lib/routing";
 import {
   RunnerOfflineError,
@@ -204,4 +204,55 @@ export function useDiffSource(): [DiffSource, (source: DiffSource) => void] {
       { replace: true },
     );
   return [source, setSource];
+}
+
+/**
+ * Branch changes of several sessions at once (shares the per-session cache
+ * with {@link useBranchChanges}, so rows and the panel fetch each list once).
+ *
+ * @param sessionIds - Sessions to diff, e.g. an orchestrator's worktree children.
+ * @returns One query result per id, in order.
+ */
+export function useBranchChangesForSessions(sessionIds: string[]) {
+  return useQueries({
+    queries: sessionIds.map((sessionId) => ({
+      queryKey: branchChangesQueryKey(sessionId),
+      queryFn: () => fetchBranchChanges(sessionId),
+      staleTime: 5_000,
+    })),
+  });
+}
+
+/** One task's changed paths, for overlap detection. */
+export interface TaskPaths {
+  id: string;
+  title: string;
+  paths: string[];
+}
+
+/**
+ * Find files changed by more than one parallel task.
+ *
+ * @param tasks - Each task's id, display title and changed paths.
+ * @returns For every task id with overlaps: path -> titles of the *other*
+ *   tasks that also change it. Tasks without overlaps are absent.
+ */
+export function findOverlaps(tasks: TaskPaths[]): Map<string, Map<string, string[]>> {
+  const owners = new Map<string, TaskPaths[]>();
+  for (const task of tasks) {
+    for (const path of new Set(task.paths)) {
+      owners.set(path, [...(owners.get(path) ?? []), task]);
+    }
+  }
+  const overlaps = new Map<string, Map<string, string[]>>();
+  for (const [path, sharing] of owners) {
+    if (sharing.length < 2) continue;
+    for (const task of sharing) {
+      const others = sharing.filter((other) => other.id !== task.id).map((other) => other.title);
+      const perTask = overlaps.get(task.id) ?? new Map<string, string[]>();
+      perTask.set(path, others);
+      overlaps.set(task.id, perTask);
+    }
+  }
+  return overlaps;
 }
