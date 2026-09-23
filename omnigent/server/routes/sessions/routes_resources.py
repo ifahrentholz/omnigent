@@ -89,6 +89,7 @@ from omnigent.server.routes._sessions.helpers import (
     _read_upload_capped,
     _require_filesystem_attachment_harness,
     _stored_file_to_resource,
+    _worktree_host_id,
     require_filesystem_attachment_runtime,
 )
 from omnigent.server.routes._sessions.orchestration import (
@@ -842,9 +843,16 @@ def register_resources_routes(
 
         if host_registry is None:
             return None
-        if not conversation.host_id or not conversation.workspace:
+        if not conversation.workspace:
             return None
-        host_conn = host_registry.get(conversation.host_id)
+        # A sub-agent child never owns a host, but its worktree lives on the
+        # nearest host-bound ancestor's host; reads may go through that host.
+        host_id = conversation.host_id or await asyncio.to_thread(
+            _worktree_host_id, conversation, conversation_store
+        )
+        if not host_id:
+            return None
+        host_conn = host_registry.get(host_id)
         if host_conn is None:
             return None
         try:
@@ -2508,6 +2516,79 @@ def register_resources_routes(
             op="diff",
             host_params={"path": relative_path},
             runner_path=path,
+        )
+
+    @router.get(
+        "/sessions/{session_id}/resources/git/changes",
+        response_model=None,
+    )
+    async def list_branch_changes(
+        request: Request,
+        session_id: str,
+        base: str | None = None,
+    ) -> Any:
+        """
+        List every file the session's branch changed since it forked.
+
+        Unlike ``.../environments/{id}/changes`` (working tree vs ``HEAD``),
+        this spans committed, uncommitted and untracked changes since
+        ``merge-base(base, HEAD)`` — the full review view of a task
+        worktree. ``base`` defaults to the session's ``git_base_branch``,
+        then to the repository's default branch.
+
+        :param request: The incoming FastAPI request (for auth).
+        :param session_id: Session/conversation identifier.
+        :param base: Optional base branch, e.g. ``"main"``.
+        :returns: Changed-file entries plus ``base`` and ``merge_base``.
+        """
+        conv = await _authorize_browse_read(session_id, request)
+        effective_base = base or conv.git_base_branch
+        return await _fs_get_with_host_fallback(
+            session_id,
+            conv,
+            op="branch_changes",
+            host_params={"base": effective_base},
+            runner_path=f"/v1/sessions/{session_id}/resources/git/changes",
+            runner_params={"base": effective_base} if effective_base else None,
+        )
+
+    @file_read_router.get(
+        "/sessions/{session_id}/resources/git/diff/{relative_path:path}",
+        # Internal (UI diff view) — hidden from the public API reference.
+        include_in_schema=False,
+        response_model=None,
+    )
+    async def read_branch_file_diff(
+        request: Request,
+        session_id: str,
+        relative_path: str,
+        base: str | None = None,
+        previous_path: str | None = None,
+    ) -> Any:
+        """
+        Return a file's content at the branch's merge-base and on disk.
+
+        :param request: The incoming FastAPI request (for auth).
+        :param session_id: Session/conversation identifier.
+        :param relative_path: Path relative to the workspace root.
+        :param base: Optional base branch; defaults like the list route.
+        :param previous_path: Old path when the file was renamed.
+        :returns: JSON with ``before`` and ``after`` content strings.
+        """
+        conv = await _authorize_browse_read(session_id, request, relative_path)
+        effective_base = base or conv.git_base_branch
+        params = {
+            key: value
+            for key, value in (("base", effective_base), ("previous_path", previous_path))
+            if value
+        }
+        return await _fs_get_with_host_fallback(
+            session_id,
+            conv,
+            op="branch_diff",
+            host_params={"path": relative_path, **params},
+            runner_path=f"/v1/sessions/{session_id}/resources/git/diff/{relative_path}",
+            runner_params=params or None,
         )
 
     @file_read_router.get(
