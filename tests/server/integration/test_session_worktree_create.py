@@ -471,3 +471,47 @@ async def test_create_failure_rollback_preserves_existing_branch(
         "rollback of an existing-branch recreate must preserve the user's "
         "pre-existing branch (unpushed commits would be lost)"
     )
+
+
+async def test_sub_agent_child_gets_its_own_worktree(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+) -> None:
+    """A named sub-agent create carrying the parent's host/workspace plus a
+    ``git`` block (what the runner sends for ``worktree: true``) creates a
+    second worktree off the main repo and binds it to the child.
+
+    The parent itself runs in a worktree, so the child's create names the
+    parent's worktree path as ``workspace`` and its branch as the base.
+    """
+    cap = register_worktree_host()
+    agent = await create_test_agent(
+        client, name="wt-orchestrator", sub_agents=[{"name": "worker"}]
+    )
+    parent_resp = await _create_git_session(client, agent["id"], {"branch_name": "feature/root"})
+    assert parent_resp.status_code == 201, parent_resp.text
+    parent = parent_resp.json()
+
+    child_resp = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "parent_session_id": parent["id"],
+            "title": "worker:login",
+            "sub_agent_name": "worker",
+            "host_id": _HOST_ID,
+            "workspace": parent["workspace"],
+            "git": {"branch_name": "omni/login-abc123", "base_branch": "feature/root"},
+        },
+    )
+    assert child_resp.status_code == 201, child_resp.text
+    child = child_resp.json()
+
+    assert len(cap.create) == 2
+    frame = cap.create[1]
+    assert frame.repo_path == parent["workspace"]
+    assert frame.branch_name == "omni/login-abc123"
+    assert frame.base_branch == "feature/root"
+    assert child["git_branch"] == "omni/login-abc123"
+    assert child["workspace"] != parent["workspace"]
+    assert child["workspace"].endswith("omni-login-abc123")

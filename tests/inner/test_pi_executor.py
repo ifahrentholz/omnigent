@@ -347,6 +347,8 @@ def test_sanitize_real_sys_session_send_args_collapses_to_object() -> None:
         "model",
         "reasoning_effort",
         "file_ids",
+        "worktree",
+        "base_branch",
         "cost_budget",
     }
     assert sanitized_args["required"] == ["input"]

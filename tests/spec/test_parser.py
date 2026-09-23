@@ -3435,6 +3435,25 @@ def test_parse_spawn_true_sets_flag(tmp_path: Path) -> None:
     assert spec.spawn is True
 
 
+def test_parse_worktree_flag(tmp_path: Path) -> None:
+    """
+    Top-level ``worktree:`` round-trips; it defaults to ``False`` and
+    rejects non-boolean values.
+
+    :param tmp_path: pytest-provided temporary directory.
+    """
+    config: dict[str, object] = {"spec_version": 1, "name": "worker"}
+    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    assert parse(tmp_path).worktree is False
+    config["worktree"] = True
+    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    assert parse(tmp_path).worktree is True
+    config["worktree"] = "yes"
+    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    with pytest.raises(ValueError, match="worktree"):
+        parse(tmp_path)
+
+
 def test_parse_share_defaults_to_none_when_omitted(agent_dir: Path) -> None:
     """
     Without a top-level ``agent_session_sharing:`` key the parsed
