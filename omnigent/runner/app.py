@@ -11140,6 +11140,14 @@ def create_runner_app(
                 status_code=404,
                 detail="Session agent has no os_env configured; filesystem API unavailable.",
             )
+        # Same rule as _resolve_session_fs_registry: a session stored with its
+        # own on-disk workspace (a sub-agent's worktree) browses that tree.
+        session_workspace = await _session_workspace_value(session_id)
+        if session_workspace:
+            session_path = Path(session_workspace).expanduser().resolve()
+            runner_root = runner_workspace.resolve() if runner_workspace is not None else None
+            if session_path != runner_root and session_path.is_dir():
+                resource_registry.set_session_workspace(session_id, str(session_path))
         return spec
 
     @app.get("/v1/sessions/{session_id}/resources/environments/{environment_id}/filesystem")

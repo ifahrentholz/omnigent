@@ -1,0 +1,173 @@
+// "Worktrees" view of the Agents rail: one row per sub-agent that runs in
+// its own git worktree, with what its branch changed since it forked.
+//
+// Each row shows the task, `branch → base` and the total +/− of the branch
+// (committed, uncommitted and untracked, via the git/changes endpoint). It
+// expands into the changed files; opening one lands on the child session with
+// the file in its branch diff (`?file=…&diff=1&diffsrc=branch`), where the
+// regular comment layer annotates that worktree.
+
+import { ChevronDownIcon, ChevronRightIcon, GitBranchIcon } from "lucide-react";
+import { useState } from "react";
+
+import { RunningDot } from "@/components/RunningDot";
+import { DIFF_SOURCE_PARAM, useBranchChanges } from "@/hooks/useBranchDiff";
+import type { ChildSessionInfo } from "@/hooks/useChildSessions";
+import { Link, useLocation } from "@/lib/routing";
+import { sessionNavigationSearch } from "@/lib/sessionNavigation";
+import { cn } from "@/lib/utils";
+
+interface WorktreesPanelProps {
+  /** The conversation rendered in main, to highlight its row. */
+  conversationId: string;
+  /** Direct child sessions of the orchestrator. */
+  sessions: ChildSessionInfo[];
+}
+
+/** Search string that opens `path` in a session's branch diff. */
+function branchDiffSearch(search: string, path?: string): string {
+  const params = new URLSearchParams(sessionNavigationSearch(search));
+  params.set(DIFF_SOURCE_PARAM, "branch");
+  if (path) {
+    params.set("file", path);
+    params.set("diff", "1");
+  }
+  return `?${params.toString()}`;
+}
+
+/**
+ * List an orchestrator's worktree sub-agents with their branch changes.
+ *
+ * @param props See {@link WorktreesPanelProps}.
+ * @returns The worktree list, or an explanatory empty state.
+ */
+export function WorktreesPanel({ conversationId, sessions }: WorktreesPanelProps) {
+  const worktrees = sessions.filter((child) => child.git_branch);
+  if (worktrees.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
+        No sub-agent worktrees yet. Sub-agents dispatched with <code>worktree: true</code> appear
+        here with their branch changes.
+      </div>
+    );
+  }
+  return (
+    <ul aria-label="Worktrees" className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
+      {worktrees.map((child) => (
+        <WorktreeRow key={child.id} child={child} isActive={child.id === conversationId} />
+      ))}
+    </ul>
+  );
+}
+
+function WorktreeRow({ child, isActive }: { child: ChildSessionInfo; isActive: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const location = useLocation();
+  const changes = useBranchChanges(child.id);
+  const files = changes.data?.data ?? [];
+  const added = files.reduce((sum, file) => sum + (file.lines_added ?? 0), 0);
+  const removed = files.reduce((sum, file) => sum + (file.lines_removed ?? 0), 0);
+  const title = child.task_summary || child.session_name || child.title || child.id;
+  const base = changes.data?.base ?? child.git_base_branch;
+  const unavailable = changes.data && !changes.data.available ? changes.data.reason : null;
+
+  return (
+    <li
+      data-testid="worktree-row"
+      data-child-session-id={child.id}
+      className={cn("border-b border-border/60", isActive && "bg-accent/60")}
+    >
+      <div className="flex items-start gap-1 px-2 py-2">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${title}` : `Expand ${title}`}
+          onClick={() => setExpanded((open) => !open)}
+          className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          {expanded ? (
+            <ChevronDownIcon className="size-3.5" />
+          ) : (
+            <ChevronRightIcon className="size-3.5" />
+          )}
+        </button>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {child.busy && <RunningDot />}
+            <Link
+              to={{ pathname: `/c/${child.id}`, search: branchDiffSearch(location.search) }}
+              className="min-w-0 truncate text-sm font-medium hover:underline"
+              title={child.title ?? undefined}
+            >
+              {title}
+            </Link>
+            <span className="ml-auto shrink-0 text-xs tabular-nums">
+              {changes.isLoading ? (
+                <span className="text-muted-foreground">…</span>
+              ) : (
+                <>
+                  <span className="text-success">+{added}</span>{" "}
+                  <span className="text-destructive">−{removed}</span>
+                </>
+              )}
+            </span>
+          </div>
+          <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+            <GitBranchIcon aria-hidden="true" className="size-3 shrink-0" />
+            <span className="truncate font-mono">{child.git_branch}</span>
+            {base && (
+              <span className="shrink-0">
+                → <span className="font-mono">{base}</span>
+              </span>
+            )}
+            <span className="ml-auto shrink-0">
+              {files.length} file{files.length === 1 ? "" : "s"}
+            </span>
+          </div>
+        </div>
+      </div>
+      {expanded && (
+        <div className="pb-2 pl-7 pr-2">
+          {unavailable ? (
+            <p className="text-xs text-muted-foreground">{unavailable}</p>
+          ) : changes.isError ? (
+            <p className="text-xs text-destructive">
+              Failed to load: {changes.error instanceof Error ? changes.error.message : "error"}
+            </p>
+          ) : files.length === 0 && !changes.isLoading ? (
+            <p className="text-xs text-muted-foreground">No changes on this branch yet.</p>
+          ) : (
+            <ul className="flex flex-col">
+              {files.map((file) => (
+                <li key={file.path}>
+                  <Link
+                    to={{
+                      pathname: `/c/${child.id}`,
+                      search: branchDiffSearch(location.search, file.path),
+                    }}
+                    data-testid="worktree-file"
+                    className="flex min-w-0 items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-accent"
+                    title={file.renamed ? `${file.previous_path} → ${file.path}` : file.path}
+                  >
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate font-mono",
+                        file.status === "deleted" && "line-through text-muted-foreground",
+                      )}
+                    >
+                      {file.path}
+                    </span>
+                    <span className="shrink-0 tabular-nums">
+                      <span className="text-success">+{file.lines_added ?? 0}</span>{" "}
+                      <span className="text-destructive">−{file.lines_removed ?? 0}</span>
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
