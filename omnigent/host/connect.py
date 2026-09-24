@@ -3583,6 +3583,7 @@ class HostProcess:
                     worktree_path=frame.worktree_path,
                     branch=frame.branch,
                     delete_branch=frame.delete_branch,
+                    force=not frame.only_if_clean,
                 )
         except WorktreeError as exc:
             return HostRemoveWorktreeResultFrame(

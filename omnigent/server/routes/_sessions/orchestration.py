@@ -305,6 +305,7 @@ from omnigent.server.routes._sessions.helpers import (
     _reject_server_reserved_label_seed,
     _relay_persist,
     _relay_persist_error_once,
+    _release_archived_worktree,
     _remove_session_worktree_best_effort,
     _repl_terminal_ui_labels,
     _require_declared_subagent,
@@ -799,6 +800,16 @@ async def _archive_stop(
     _pending_archive_stops.pop(session_id, None)
 
     await _facade._best_effort_stop(session_id, conversation_store, runner_router)
+    # A clean sub-agent worktree is freed; its branch stays reviewable.
+    try:
+        await _release_archived_worktree(conv, conversation_store, host_registry)
+    except Exception:  # noqa: BLE001
+        _logger.debug(
+            "Archive worktree release failed for %s",
+            session_id,
+            exc_info=True,
+            extra={"session_id": session_id},
+        )
     if not conv.host_id or not conv.runner_id:
         return
     # Mark the tunnel drop intentional BEFORE tearing it down so the relay

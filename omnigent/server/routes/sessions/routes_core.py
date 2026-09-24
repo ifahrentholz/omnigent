@@ -152,6 +152,7 @@ from omnigent.server.routes._sessions.helpers import (
     _require_cost_control_label_authority,
     _require_permission_mode_forward,
     _reset_runner_resources_after_switch,
+    _restore_archived_worktree,
     _same_provider_family,
     _session_status_cache,
     _session_status_from_cache,
@@ -2455,6 +2456,7 @@ def register_core_routes(
         if conv is None:
             raise _session_not_found()
         previous_runner_id = conv.runner_id
+        was_archived = conv.archived
         if body.runner_id is not None:
             # Empty string is the clear sentinel (None = leave unchanged);
             # used by /clear and /switch to move the runner between sessions.
@@ -2662,6 +2664,14 @@ def register_core_routes(
             # decided to keep. Same-replica fast path; the deferred stop's
             # archived-flag re-check covers a cross-replica Undo.
             _cancel_pending_archive_stop(session_id)
+            if was_archived:
+                # Archiving may have freed a clean sub-agent worktree; bring it
+                # back from its branch before the session runs again.
+                await _restore_archived_worktree(
+                    updated,
+                    conversation_store,
+                    getattr(request.app.state, "host_registry", None),
+                )
         # The runner applies native settings live. Silent startup metadata
         # writes skip both recovery and forwarding to avoid recursive launches.
         live_forward = not body.silent
