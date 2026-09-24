@@ -109,6 +109,9 @@ _ALT_COVERED: frozenset[str] = frozenset(
         "deep-research",
         # Covered by tests/e2e/omnigent/test_repl_overview_terminal_visibility.py.
         "terminal_workers",
+        # Covered by tests/spec/test_foreman_example.py (spec shape) and
+        # tests/e2e/test_subagent_worktree_e2e.py (worktree dispatch).
+        "foreman",
         # Covered by tests/e2e/test_subagent_tool_limit_e2e.py. Hyphenated
         # name, so it can't use the ``test_example_<name>.py`` convention.
         "subagent-tool-limit",

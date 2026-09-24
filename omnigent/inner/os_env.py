@@ -1523,7 +1523,7 @@ def _shell_impl(
         completed = subprocess.run(
             argv,
             cwd=str(cwd),
-            env=_child_shell_env(),
+            env=_child_shell_env(cwd),
             text=True,
             capture_output=True,
             timeout=timeout,
@@ -1624,9 +1624,11 @@ def _same_path(entry: str, root: Path) -> bool:
         return os.path.normpath(entry) == os.path.normpath(str(root))
 
 
-def _child_shell_env() -> dict[str, str]:
+def _child_shell_env(cwd: Path | None = None) -> dict[str, str]:
     """
     Environment for agent shell commands, minus omnigent's own package root.
+
+    A command run inside a task worktree also gets that worktree's port range.
 
     The helper prepends its project root to ``PYTHONPATH`` at spawn (see
     ``_HelperProcessClient._start_locked``) purely so ``python -m
@@ -1636,8 +1638,12 @@ def _child_shell_env() -> dict[str, str]:
     ``sys.path`` (e.g. a 3.12 ``pydantic_core`` failing to load under a 3.13
     project). Strip only omnigent's entry — any other ``PYTHONPATH`` the caller
     set is preserved, in order.
+
+    :param cwd: The command's working directory, or ``None``.
     """
-    env = os.environ.copy()
+    from omnigent.host.worktree_ports import worktree_port_env
+
+    env = {**os.environ, **worktree_port_env(cwd)}
     raw = env.get("PYTHONPATH")
     if not raw:
         return env

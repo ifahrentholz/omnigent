@@ -57,6 +57,10 @@ If tasks need git-ignored files (`.env`) or installed dependencies, commit a
 `.omnigent/worktree.yaml` to your repository. See
 [Preparing worktrees](../../docs/AGENT_YAML_SPEC.md#preparing-worktrees-omnigentworktreeyaml).
 
+Each worktree also gets its own port range for dev servers (`$PORT`,
+`$OMNIGENT_PORT_BASE`), shown next to the task in the Worktrees view. See
+[Dev server ports](../../docs/AGENT_YAML_SPEC.md#dev-server-ports).
+
 ## Landing a task
 
 foreman never merges on its own. In the Worktrees view, expand a task and
