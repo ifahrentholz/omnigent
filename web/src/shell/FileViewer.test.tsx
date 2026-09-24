@@ -21,6 +21,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Comment } from "@/hooks/useComments";
+import type * as CommentsModule from "@/hooks/useComments";
 import { isFilePositionPending } from "./filePositionState";
 
 const codeViewerRenders = vi.hoisted(() => vi.fn());
@@ -141,7 +142,8 @@ vi.mock("@/hooks/useIsMobileViewport", () => ({
   useIsMobileViewport: vi.fn(() => false),
 }));
 
-vi.mock("@/hooks/useComments", () => ({
+vi.mock("@/hooks/useComments", async (importOriginal) => ({
+  lineRange: (await importOriginal<typeof CommentsModule>()).lineRange,
   useComments: vi.fn(),
   useAddComment: vi.fn(() => ({ mutate: vi.fn() })),
   useUpdateComment: vi.fn(() => ({ mutate: vi.fn() })),
@@ -1026,6 +1028,40 @@ describe("classifyAndRemapComments", () => {
     expect(result.open[0].id).toBe("c3");
     expect(result.open[0].start_index).toBe(40);
     expect(result.open[0].end_index).toBe(60);
+    expect(result.open[0].outdated).toBe(true);
+  });
+
+  it("follows a re-indented anchor and moves its line numbers with it", () => {
+    const c = makeAnchoredComment({
+      id: "c_reflow",
+      start_index: 0,
+      end_index: 21,
+      anchor_content: "if ready:\n    run()",
+      start_line: 1,
+      end_line: 2,
+    });
+    const fileContent = "# header\n\ndef main():\n    if ready:\n        run()\n";
+
+    const [moved] = classifyAndRemapComments([c], fileContent).open;
+
+    expect(moved.outdated).toBeUndefined();
+    expect(fileContent.slice(moved.start_index, moved.end_index)).toBe("if ready:\n        run()");
+    expect([moved.start_line, moved.end_line]).toEqual([4, 5]);
+  });
+
+  it("updates line numbers when an edit above shifts the anchor", () => {
+    const c = makeAnchoredComment({
+      id: "c_lines",
+      start_index: 0,
+      end_index: 5,
+      anchor_content: "hello",
+      start_line: 1,
+      end_line: 1,
+    });
+
+    const [moved] = classifyAndRemapComments([c], "new\nlines\nhello").open;
+
+    expect([moved.start_line, moved.end_line]).toEqual([3, 3]);
   });
 
   it("falls back to a global search when no occurrence is near the stored offset", () => {
