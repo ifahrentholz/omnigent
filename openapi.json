@@ -14721,6 +14721,82 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/resources/git/conflicts": {
+      "get": {
+        "description": "Predict which files would conflict when landing the session's branch.\n\nDry-runs `git merge-tree` of the branch's committed `HEAD` against\nits base and against other branches, e.g. parallel task worktrees.\nNothing is written to any worktree.\n\n**Returns:** One `{ref, clean, files}` result per compared branch, plus `head`, `base`, `dirty` and `supported`.",
+        "operationId": "predict_branch_conflicts_v1_sessions__session_id__resources_git_conflicts_get",
+        "parameters": [
+          {
+            "description": "Session/conversation identifier.",
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional base branch; defaults like the changes route.",
+            "in": "query",
+            "name": "base",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Base"
+            }
+          },
+          {
+            "description": "Optional comma-separated branches to compare with.",
+            "in": "query",
+            "name": "against",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Against"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Predict Branch Conflicts",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/resources/git/merge": {
       "post": {
         "description": "Land the session's task branch on its base branch.\n\nRuns on the runner, which holds the worktree: the branch checked out\nin the session's workspace is merged into `base` (default: the\nsession's `git_base_branch`) in the checkout that has the base.\nBoth must be clean; a conflicting merge is aborted and reported with\nits files (409), leaving both trees unchanged.\n\n**Returns:** `{merged, branch, base, commit, checkout}`.",

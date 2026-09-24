@@ -2,23 +2,35 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { findOverlaps, useBranchChanges, useBranchChangesForSessions } from "@/hooks/useBranchDiff";
+import {
+  findOverlaps,
+  useBranchChanges,
+  useBranchChangesForSessions,
+  useBranchConflicts,
+} from "@/hooks/useBranchDiff";
 import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
-import { LandError, useLandBranch, useRequestPullRequest } from "@/hooks/useLandBranch";
+import {
+  LandError,
+  useLandBranch,
+  useNotifyOrchestrator,
+  useRequestPullRequest,
+} from "@/hooks/useLandBranch";
 import type * as LandBranchModule from "@/hooks/useLandBranch";
-import { WorktreesPanel, taskStage } from "./WorktreesPanel";
+import { WorktreesPanel, conflictNotice, taskStage } from "./WorktreesPanel";
 
 vi.mock("@/hooks/useBranchDiff", async (importOriginal) => ({
   ...(await importOriginal<typeof BranchDiffModule>()),
   useBranchChanges: vi.fn(),
   useBranchChangesForSessions: vi.fn(),
+  useBranchConflicts: vi.fn(),
 }));
 
 vi.mock("@/hooks/useLandBranch", async (importOriginal) => ({
   ...(await importOriginal<typeof LandBranchModule>()),
   useLandBranch: vi.fn(),
   useRequestPullRequest: vi.fn(),
+  useNotifyOrchestrator: vi.fn(),
 }));
 
 function mutation(overrides: Record<string, unknown> = {}) {
@@ -48,7 +60,36 @@ beforeEach(() => {
   vi.mocked(useRequestPullRequest).mockReturnValue(
     mutation() as unknown as ReturnType<typeof useRequestPullRequest>,
   );
+  vi.mocked(useNotifyOrchestrator).mockReturnValue(
+    mutation() as unknown as ReturnType<typeof useNotifyOrchestrator>,
+  );
+  vi.mocked(useBranchConflicts).mockReturnValue(verdicts(null));
 });
+
+function verdicts(
+  results: { ref: string; clean: boolean | null; files: string[] }[] | null,
+  dirty = false,
+) {
+  return {
+    data: results ? { base: "main", dirty, supported: true, results } : undefined,
+  } as unknown as ReturnType<typeof useBranchConflicts>;
+}
+
+function sharedFileChanges() {
+  vi.mocked(useBranchChanges).mockImplementation(
+    (id: string | undefined) =>
+      (id === "conv_a"
+        ? branchResult([{ path: "src/shared.ts", added: 1, removed: 0 }])
+        : branchResult([{ path: "src/shared.ts", added: 2, removed: 1 }])) as ReturnType<
+        typeof useBranchChanges
+      >,
+  );
+}
+
+const PAIR = [
+  child({ id: "conv_a", session_name: "login", git_branch: "omni/login-1" }),
+  child({ id: "conv_b", session_name: "billing", git_branch: "omni/billing-2" }),
+];
 
 afterEach(cleanup);
 
@@ -250,6 +291,94 @@ describe("WorktreesPanel", () => {
     expect(badges[0].getAttribute("title")).toContain("billing");
     fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
     expect(screen.getAllByLabelText("changed by another task too")).toHaveLength(1);
+  });
+});
+
+describe("conflict prediction", () => {
+  it("dry-runs each task against its base and the tasks sharing its files", () => {
+    sharedFileChanges();
+    render(
+      <MemoryRouter>
+        <WorktreesPanel conversationId="conv_root" sessions={PAIR} orchestratorId="conv_root" />
+      </MemoryRouter>,
+    );
+    expect(vi.mocked(useBranchConflicts)).toHaveBeenCalledWith("conv_a", ["omni/billing-2"], {
+      enabled: true,
+    });
+    expect(vi.mocked(useBranchConflicts)).toHaveBeenCalledWith("conv_b", ["omni/login-1"], {
+      enabled: true,
+    });
+  });
+
+  it("tells a clean overlap from a real conflict", () => {
+    sharedFileChanges();
+    vi.mocked(useBranchConflicts).mockImplementation((id) =>
+      id === "conv_a"
+        ? verdicts([
+            { ref: "main", clean: true, files: [] },
+            { ref: "omni/billing-2", clean: false, files: ["src/shared.ts"] },
+          ])
+        : verdicts([
+            { ref: "main", clean: true, files: [] },
+            { ref: "omni/login-1", clean: true, files: [] },
+          ]),
+    );
+    render(
+      <MemoryRouter>
+        <WorktreesPanel conversationId="conv_root" sessions={PAIR} orchestratorId="conv_root" />
+      </MemoryRouter>,
+    );
+
+    const [conflicting, clean] = screen.getAllByTestId("worktree-overlap");
+    expect(conflicting.textContent).toBe("conflict");
+    expect(conflicting.getAttribute("title")).toContain("omni/billing-2");
+    expect(clean.textContent).toBe("1 shared");
+    expect(clean.getAttribute("title")).toContain("predicted to merge cleanly");
+  });
+
+  it("flags a conflict with the base and lets the user notify the orchestrator", () => {
+    const notify = mutation();
+    vi.mocked(useNotifyOrchestrator).mockReturnValue(
+      notify as unknown as ReturnType<typeof useNotifyOrchestrator>,
+    );
+    vi.mocked(useBranchChanges).mockReturnValue(
+      branchResult([{ path: "src/a.ts", added: 1, removed: 0 }]),
+    );
+    vi.mocked(useBranchConflicts).mockReturnValue(
+      verdicts([{ ref: "main", clean: false, files: ["src/a.ts"] }], true),
+    );
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[child({ id: "conv_wt", git_branch: "omni/login-a1b2c3" })]}
+          orchestratorId="conv_root"
+        />
+      </MemoryRouter>,
+    );
+
+    const badge = screen.getByTestId("worktree-base-conflict");
+    expect(badge.textContent).toBe("conflicts with main");
+    expect(badge.getAttribute("title")).toContain("committed changes only");
+    fireEvent.click(screen.getByRole("button", { name: /^Expand / }));
+    expect(screen.getByTestId("worktree-conflicts").textContent).toContain("src/a.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Tell orchestrator" }));
+    const [text] = vi.mocked(notify.mutate).mock.calls[0] as [string];
+    expect(text).toContain("omni/login-a1b2c3");
+    expect(text).toContain("the base main: src/a.ts");
+    expect(vi.mocked(useNotifyOrchestrator)).toHaveBeenCalledWith("conv_root");
+  });
+
+  it("names the rival task in the orchestrator notice", () => {
+    const text = conflictNotice(
+      { title: "login", branch: "omni/login-1", sessionId: "conv_a" },
+      "main",
+      [{ ref: "omni/billing-2", clean: false, files: ["src/shared.ts", "src/b.ts"] }],
+      [{ branch: "omni/billing-2", title: "billing" }],
+    );
+    expect(text).toContain('task "login" (omni/login-1, session conv_a)');
+    expect(text).toContain("- with billing (omni/billing-2): src/shared.ts, src/b.ts");
+    expect(text).toContain("rebase onto main");
   });
 });
 

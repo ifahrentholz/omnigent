@@ -2555,6 +2555,44 @@ def register_resources_routes(
             runner_params={"base": effective_base} if effective_base else None,
         )
 
+    @router.get(
+        "/sessions/{session_id}/resources/git/conflicts",
+        response_model=None,
+    )
+    async def predict_branch_conflicts(
+        request: Request,
+        session_id: str,
+        base: str | None = None,
+        against: str | None = None,
+    ) -> Any:
+        """
+        Predict which files would conflict when landing the session's branch.
+
+        Dry-runs ``git merge-tree`` of the branch's committed ``HEAD`` against
+        its base and against other branches, e.g. parallel task worktrees.
+        Nothing is written to any worktree.
+
+        :param request: The incoming FastAPI request (for auth).
+        :param session_id: Session/conversation identifier.
+        :param base: Optional base branch; defaults like the changes route.
+        :param against: Optional comma-separated branches to compare with.
+        :returns: One ``{ref, clean, files}`` result per compared branch,
+            plus ``head``, ``base``, ``dirty`` and ``supported``.
+        """
+        conv = await _authorize_browse_read(session_id, request)
+        effective_base = base or conv.git_base_branch
+        params = {
+            key: value for key, value in (("base", effective_base), ("against", against)) if value
+        }
+        return await _fs_get_with_host_fallback(
+            session_id,
+            conv,
+            op="branch_conflicts",
+            host_params=params,
+            runner_path=f"/v1/sessions/{session_id}/resources/git/conflicts",
+            runner_params=params or None,
+        )
+
     @file_read_router.get(
         "/sessions/{session_id}/resources/git/diff/{relative_path:path}",
         # Internal (UI diff view) — hidden from the public API reference.
