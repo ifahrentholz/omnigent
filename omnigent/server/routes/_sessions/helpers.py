@@ -9265,6 +9265,27 @@ _DELETE_WORKTREE_OFFLINE_MESSAGE = (
 _WORKTREE_HOST_MAX_DEPTH = 16
 
 
+def _worktree_host_session(conv: Any, conversation_store: Any) -> Any | None:
+    """
+    Find the nearest session, ``conv`` included, that owns a host.
+
+    :param conv: The session's :class:`Conversation`.
+    :param conversation_store: Store used to walk the parent chain.
+    :returns: That :class:`Conversation`, or ``None`` when none is host-bound.
+    """
+    current = conv
+    for _ in range(_WORKTREE_HOST_MAX_DEPTH):
+        if current.host_id is not None:
+            return current
+        parent_id = current.parent_conversation_id
+        if parent_id is None:
+            return None
+        current = conversation_store.get_conversation(parent_id)
+        if current is None:
+            return None
+    return None
+
+
 def _worktree_host_id(conv: Any, conversation_store: Any) -> str | None:
     """
     Resolve the host that holds a session's server-created worktree.
@@ -9277,17 +9298,142 @@ def _worktree_host_id(conv: Any, conversation_store: Any) -> str | None:
     :param conversation_store: Store used to walk the parent chain.
     :returns: The host id, or ``None`` when no ancestor is host-bound.
     """
-    current = conv
-    for _ in range(_WORKTREE_HOST_MAX_DEPTH):
-        if current.host_id is not None:
-            return current.host_id
-        parent_id = current.parent_conversation_id
-        if parent_id is None:
-            return None
-        current = conversation_store.get_conversation(parent_id)
-        if current is None:
-            return None
-    return None
+    owner = _worktree_host_session(conv, conversation_store)
+    return owner.host_id if owner is not None else None
+
+
+async def _subagent_worktree_host(
+    conv: Any, conversation_store: Any, host_registry: Any
+) -> tuple[Any, Any] | None:
+    """
+    Resolve the live host connection holding a sub-agent's worktree.
+
+    :param conv: The session's :class:`Conversation`.
+    :param conversation_store: Store used to walk the parent chain.
+    :param host_registry: The server's ``HostRegistry``, or ``None``.
+    :returns: ``(host_session, host_conn)`` for a sub-agent with a
+        server-created worktree whose host is connected and supports clean
+        removal; ``None`` otherwise.
+    """
+    from omnigent.host.frames import CAP_CLEAN_WORKTREE_REMOVE
+
+    if (
+        host_registry is None
+        or conv.parent_conversation_id is None
+        or not conv.git_branch
+        or not conv.workspace
+    ):
+        return None
+    owner = await asyncio.to_thread(_worktree_host_session, conv, conversation_store)
+    if owner is None or not owner.workspace:
+        return None
+    host_conn = host_registry.get(owner.host_id)
+    if host_conn is None or CAP_CLEAN_WORKTREE_REMOVE not in host_conn.hello.capabilities:
+        return None
+    return owner, host_conn
+
+
+async def _release_archived_worktree(
+    conv: Any, conversation_store: Any, host_registry: Any
+) -> None:
+    """
+    Remove an archived sub-agent's worktree when it is clean; keep the branch.
+
+    A worktree with uncommitted or untracked changes stays. Unarchiving
+    recreates the worktree from the branch (:func:`_restore_archived_worktree`).
+
+    :param conv: The archived session's :class:`Conversation`.
+    :param conversation_store: Store used to walk the parent chain.
+    :param host_registry: The server's ``HostRegistry``, or ``None``.
+    """
+    from omnigent.server.routes._host_worktree import (
+        WorktreeHostUnavailableError,
+        WorktreeProxyError,
+        remove_worktree_on_host,
+    )
+
+    resolved = await _subagent_worktree_host(conv, conversation_store, host_registry)
+    if resolved is None:
+        return
+    owner, host_conn = resolved
+    shared = await asyncio.to_thread(
+        conversation_store.has_other_live_session_in_workspace,
+        host_id=owner.host_id,
+        workspace=conv.workspace,
+        exclude_conversation_id=conv.id,
+    )
+    if shared:
+        return
+    try:
+        await remove_worktree_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            worktree_path=conv.workspace,
+            branch=conv.git_branch,
+            delete_branch=False,
+            only_if_clean=True,
+        )
+    except (WorktreeHostUnavailableError, WorktreeProxyError) as exc:
+        _logger.info("Keeping archived worktree %s: %s", conv.workspace, exc)
+        return
+    _logger.info("Removed clean worktree %s of archived %s", conv.workspace, conv.id)
+
+
+async def _restore_archived_worktree(
+    conv: Any, conversation_store: Any, host_registry: Any
+) -> None:
+    """
+    Recreate an unarchived sub-agent's worktree from its kept branch.
+
+    A no-op when the worktree is still there (it had changes, or the
+    archive was undone in time): the host reports the branch as checked out.
+
+    :param conv: The unarchived session's :class:`Conversation`.
+    :param conversation_store: Store used to walk the parent chain.
+    :param host_registry: The server's ``HostRegistry``, or ``None``.
+    """
+    from omnigent.server.routes._host_worktree import (
+        WorktreeHostUnavailableError,
+        WorktreeProxyError,
+        create_worktree_on_host,
+        remove_worktree_on_host,
+    )
+
+    resolved = await _subagent_worktree_host(conv, conversation_store, host_registry)
+    if resolved is None:
+        return
+    owner, host_conn = resolved
+    try:
+        created = await create_worktree_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            repo_path=owner.workspace,
+            branch_name=conv.git_branch,
+            base_branch=None,
+            existing_branch=True,
+        )
+    except (WorktreeHostUnavailableError, WorktreeProxyError) as exc:
+        _logger.debug("Not recreating worktree for %s: %s", conv.id, exc)
+        return
+    if created.worktree_path != conv.workspace:
+        # The session row still points at the old directory; a worktree
+        # elsewhere would be invisible to it.
+        _logger.warning(
+            "Recreated worktree for %s landed at %s, not %s; removing it",
+            conv.id,
+            created.worktree_path,
+            conv.workspace,
+        )
+        with contextlib.suppress(WorktreeHostUnavailableError, WorktreeProxyError):
+            await remove_worktree_on_host(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                worktree_path=created.worktree_path,
+                branch=None,
+                delete_branch=False,
+            )
+        return
+    _logger.info("Recreated worktree %s for unarchived %s", conv.workspace, conv.id)
 
 
 def _descendant_worktrees(conversation_store: Any, session_id: str) -> list[Any]:

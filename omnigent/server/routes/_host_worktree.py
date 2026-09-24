@@ -195,6 +195,7 @@ async def remove_worktree_on_host(
     worktree_path: str,
     branch: str | None,
     delete_branch: bool,
+    only_if_clean: bool = False,
 ) -> None:
     """
     Send a ``host.remove_worktree`` frame and await the result.
@@ -209,6 +210,8 @@ async def remove_worktree_on_host(
         deletion.
     :param delete_branch: When ``True``, delete ``branch`` after
         removing the worktree directory.
+    :param only_if_clean: Keep a worktree with local changes. The caller
+        must check the host advertises ``CAP_CLEAN_WORKTREE_REMOVE``.
     :raises WorktreeHostUnavailableError: If the host connection drops
         or doesn't respond within :data:`_WORKTREE_TIMEOUT_S`.
     :raises WorktreeProxyError: If the host reports a removal failure.
@@ -220,6 +223,7 @@ async def remove_worktree_on_host(
             worktree_path=worktree_path,
             branch=branch,
             delete_branch=delete_branch,
+            only_if_clean=only_if_clean,
         )
     )
     result = await _await_host_worktree_result(

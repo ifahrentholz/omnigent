@@ -92,12 +92,22 @@ async def register_worktree_host(
     """
     conns: list[HostConnection] = []
 
-    def _register(*, create_status: str = "ok", create_error: str | None = None) -> _HostCapture:
+    def _register(
+        *,
+        create_status: str = "ok",
+        create_error: str | None = None,
+        capabilities: list[str] | None = None,
+    ) -> _HostCapture:
         HostStore(db_uri).upsert_on_connect(_HOST_ID, "wt-host", RESERVED_USER_LOCAL)
         conn = app.state.host_registry.register(
             host_id=_HOST_ID,
             ws=_FakeWebSocket(),  # type: ignore[arg-type] — duck-typed
-            hello=HostHelloFrame(version="0.1.0-test", frame_protocol_version=1, name="wt-host"),
+            hello=HostHelloFrame(
+                version="0.1.0-test",
+                frame_protocol_version=1,
+                name="wt-host",
+                capabilities=list(capabilities or []),
+            ),
             owner=RESERVED_USER_LOCAL,
         )
         cap = _HostCapture()
@@ -572,3 +582,113 @@ async def test_deleting_an_orchestrator_removes_its_workers_worktrees(
     removed = {(frame.worktree_path, frame.branch, frame.delete_branch) for frame in cap.remove}
     assert (child["workspace"], "omni/task-abc123", True) in removed
     assert (parent["workspace"], "feature/orch", True) in removed
+
+
+async def _worker_child(
+    client: httpx.AsyncClient, agent_name: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Create an orchestrator in a worktree plus one worktree sub-agent.
+
+    :param client: The test HTTP client.
+    :param agent_name: Unique agent name.
+    :returns: ``(parent, child)`` session payloads.
+    """
+    agent = await create_test_agent(client, name=agent_name, sub_agents=[{"name": "worker"}])
+    parent = (
+        await _create_git_session(client, agent["id"], {"branch_name": f"feature/{agent_name}"})
+    ).json()
+    child_resp = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent["id"],
+            "parent_session_id": parent["id"],
+            "title": "worker:task",
+            "sub_agent_name": "worker",
+            "host_id": _HOST_ID,
+            "workspace": parent["workspace"],
+            "git": {"branch_name": "omni/task-def456", "base_branch": parent["git_branch"]},
+        },
+    )
+    assert child_resp.status_code == 201, child_resp.text
+    return parent, child_resp.json()
+
+
+async def _wait_for(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
+    """
+    Poll until ``predicate`` holds.
+
+    :param predicate: Condition to wait for.
+    :param timeout: Seconds before giving up.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, "condition not met in time"
+        await asyncio.sleep(0.05)
+
+
+async def test_archiving_a_worker_frees_its_clean_worktree_and_unarchive_restores_it(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Archive removes the worktree only if clean, keeping the branch; unarchive recreates it."""
+    from omnigent.host.frames import CAP_CLEAN_WORKTREE_REMOVE
+    from omnigent.server.routes import sessions as sessions_facade
+
+    monkeypatch.setattr(sessions_facade, "_ARCHIVE_STOP_UNDO_GRACE_S", 0.0)
+    cap = register_worktree_host(capabilities=[CAP_CLEAN_WORKTREE_REMOVE])
+    parent, child = await _worker_child(client, "wt-archive")
+
+    archived = await client.patch(f"/v1/sessions/{child['id']}", json={"archived": True})
+    assert archived.status_code == 200, archived.text
+    await _wait_for(lambda: len(cap.remove) == 1)
+    [frame] = cap.remove
+    assert (frame.worktree_path, frame.branch) == (child["workspace"], "omni/task-def456")
+    assert frame.only_if_clean is True
+    assert frame.delete_branch is False
+
+    creates_before = len(cap.create)
+    restored = await client.patch(f"/v1/sessions/{child['id']}", json={"archived": False})
+    assert restored.status_code == 200, restored.text
+    recreate = cap.create[creates_before:]
+    assert [(f.repo_path, f.branch_name, f.existing_branch) for f in recreate] == [
+        (parent["workspace"], "omni/task-def456", True)
+    ]
+
+
+async def test_archive_keeps_worktrees_on_hosts_without_clean_remove(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An older host would force-remove, so it is never asked."""
+    from omnigent.server.routes import sessions as sessions_facade
+
+    monkeypatch.setattr(sessions_facade, "_ARCHIVE_STOP_UNDO_GRACE_S", 0.0)
+    cap = register_worktree_host()
+    _parent, child = await _worker_child(client, "wt-archive-old")
+
+    archived = await client.patch(f"/v1/sessions/{child['id']}", json={"archived": True})
+    assert archived.status_code == 200, archived.text
+    await asyncio.sleep(0.3)
+    assert cap.remove == []
+
+
+async def test_archiving_a_top_level_session_keeps_its_worktree(
+    register_worktree_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only sub-agent worktrees are reclaimed; a user's own session keeps its checkout."""
+    from omnigent.host.frames import CAP_CLEAN_WORKTREE_REMOVE
+    from omnigent.server.routes import sessions as sessions_facade
+
+    monkeypatch.setattr(sessions_facade, "_ARCHIVE_STOP_UNDO_GRACE_S", 0.0)
+    cap = register_worktree_host(capabilities=[CAP_CLEAN_WORKTREE_REMOVE])
+    parent, _child = await _worker_child(client, "wt-archive-top")
+
+    archived = await client.patch(f"/v1/sessions/{parent['id']}", json={"archived": True})
+    assert archived.status_code == 200, archived.text
+    await asyncio.sleep(0.3)
+    assert cap.remove == []
