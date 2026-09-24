@@ -580,7 +580,11 @@ ports:
 
 Deleting a session with `delete_branch=true` removes its worktree and branch,
 and the worktrees and branches of all its sub-agents as well. Archiving or
-closing a sub-agent keeps its worktree, so the branch stays reviewable.
+closing (`sys_session_close`) a sub-agent removes its worktree once the undo
+window has passed, but only if the worktree has no uncommitted or untracked
+changes. The branch is always kept, so the work stays reviewable and
+landable. Unarchiving recreates the worktree from that branch. Hosts older
+than this feature keep the worktree.
 
 Leftover worktrees of archived or deleted sessions can be removed with:
 
