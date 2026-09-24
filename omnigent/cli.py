@@ -2135,6 +2135,7 @@ _CLICK_SUBCOMMANDS: frozenset[str] = frozenset(
         "upgrade",
         "usage",
         "version",
+        "worktrees",
     }
 )
 
@@ -6832,6 +6833,150 @@ def usage(limit: int, server: str | None, as_json: bool) -> None:
         return
 
     _render_usage(report, limit)
+
+
+def _fetch_all_sessions(base_url: str) -> list[dict[str, Any]]:  # type: ignore[explicit-any]
+    """
+    Page through every session the server knows, archived and sub-agents included.
+
+    :param base_url: Omnigent server URL.
+    :returns: Session list items.
+    :raises httpx.HTTPError: When the server cannot be reached or refuses.
+    """
+    import httpx
+
+    from omnigent.chat import _remote_headers
+
+    sessions: list[dict[str, Any]] = []  # type: ignore[explicit-any]
+    params: dict[str, str] = {
+        "limit": "1000",
+        "kind": "any",
+        "include_archived": "true",
+        "visibility": "all",
+    }
+    with httpx.Client(
+        base_url=base_url,
+        headers=_remote_headers(server_url=base_url, host_id=None),
+        timeout=60.0,
+        trust_env=_trust_env_for(base_url),
+    ) as client:
+        while True:
+            resp = client.get("/v1/sessions", params=params)
+            resp.raise_for_status()
+            page = resp.json()
+            sessions.extend(page.get("data") or [])
+            if not page.get("has_more") or not page.get("last_id"):
+                return sessions
+            params["after"] = str(page["last_id"])
+
+
+@cli.group("worktrees")
+def worktrees_group() -> None:
+    """Manage the git worktrees sub-agents work in."""
+
+
+@worktrees_group.command("prune")
+@click.option(
+    "--repo",
+    "repo_path",
+    default=".",
+    show_default=True,
+    type=click.Path(exists=True, file_okay=False),
+    help="Repository whose sub-agent worktrees to prune.",
+)
+@click.option(
+    "--server",
+    default=None,
+    help=(
+        "Omnigent server URL. "
+        "Defaults to the configured server, or a local server already running."
+    ),
+)
+@click.option("--dry-run", is_flag=True, default=False, help="Only list what would be removed.")
+@click.option("--yes", "-y", is_flag=True, default=False, help="Do not ask for confirmation.")
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Also remove worktrees with uncommitted or untracked changes.",
+)
+@click.option(
+    "--delete-branch",
+    is_flag=True,
+    default=False,
+    help="Also delete branches whose work already landed on their base.",
+)
+def worktrees_prune(
+    repo_path: str,
+    server: str | None,
+    dry_run: bool,
+    yes: bool,
+    force: bool,
+    delete_branch: bool,
+) -> None:
+    """Remove sub-agent worktrees that no live session uses.
+
+    Lists the repository's ``omni/*`` worktrees whose session was deleted or
+    archived, then removes them after confirmation. Worktrees of live sessions
+    are never touched, and branches are kept unless ``--delete-branch`` is
+    given and their work already landed. The server must be reachable to tell
+    live sessions apart.
+
+    \b
+    Examples:
+      omnigent worktrees prune --dry-run
+      omnigent worktrees prune --repo ~/src/app --delete-branch
+    """
+    import httpx
+
+    from omnigent.host.git_worktree import WorktreeError
+    from omnigent.host.worktree_prune import (
+        find_prune_candidates,
+        prune_stale_registrations,
+        prune_worktree,
+    )
+
+    cfg = _load_effective_config()
+    base_url = _resolve_attach_server(server, cfg.get("server"))
+    if base_url is None:
+        base_url = ensure_local_omnigent_server().url
+    try:
+        sessions = _fetch_all_sessions(base_url.rstrip("/"))
+    except httpx.HTTPError as exc:
+        # Without the session list a worktree could belong to a live session.
+        raise click.ClickException(
+            f"cannot list sessions from {base_url} ({exc}); pass --server to reach the "
+            "server that owns these worktrees"
+        ) from exc
+
+    try:
+        prune_stale_registrations(repo_path)
+        candidates = find_prune_candidates(repo_path, sessions)
+    except WorktreeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not candidates:
+        click.echo("No sub-agent worktrees to prune.")
+        return
+    removable = [c for c in candidates if force or not c.dirty]
+    for candidate in candidates:
+        notes = [candidate.reason]
+        if candidate.landed:
+            notes.append("landed")
+        if candidate.dirty:
+            notes.append("uncommitted changes" + ("" if force else ", skipped"))
+        click.echo(f"  {candidate.branch}  {candidate.path}  ({'; '.join(notes)})")
+    if dry_run or not removable:
+        return
+    if not yes and not click.confirm(f"Remove {len(removable)} worktree(s)?", default=False):
+        return
+    for candidate in removable:
+        try:
+            deleted = prune_worktree(candidate, force=force, delete_branch=delete_branch)
+        except WorktreeError as exc:
+            click.echo(f"Skipped {candidate.path}: {exc}", err=True)
+            continue
+        suffix = " and its branch" if deleted else f"; branch {candidate.branch} kept"
+        click.echo(f"Removed {candidate.path}{suffix}.")
 
 
 @cli.group("session", invoke_without_command=True)
