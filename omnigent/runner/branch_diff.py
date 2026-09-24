@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from omnigent.entities.environment_filesystem import InvalidPath
+from omnigent.host.worktree_ports import read_worktree_ports
 from omnigent.runner.environment_filesystem import _validate_path
 from omnigent.runtime.filesystem_registry import _git_timeout_seconds
 
@@ -237,7 +238,8 @@ def branch_changes(
     :param root: Absolute workspace directory, e.g. a task worktree.
     :param session_id: Unused; accepted for the shared call convention.
     :param base: Base branch, e.g. ``"main"``; inferred when ``None``.
-    :returns: A list payload plus ``base`` and ``merge_base``.
+    :returns: A list payload plus ``base``, ``merge_base``, ``landed`` and
+        the worktree's ``ports`` allocation (or ``None``).
     :raises BranchDiffError: On a non-git workspace or unresolvable base.
     """
     del session_id
@@ -270,6 +272,7 @@ def branch_changes(
         "base": base_name,
         "merge_base": merge_base,
         "landed": _is_landed(root, base_name, data, has_untracked=bool(untracked.strip())),
+        "ports": ports.to_json() if (ports := read_worktree_ports(root)) is not None else None,
     }
 
 

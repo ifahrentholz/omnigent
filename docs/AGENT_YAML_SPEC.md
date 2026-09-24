@@ -551,6 +551,31 @@ to answer within the server's timeout, so keep it short. Long cold installs
 belong in the agent's task. When setup fails or times out, the worktree and its
 new branch are removed again and the create reports the command's output.
 
+#### Dev server ports
+
+Parallel tasks that start dev servers would collide on the same port. Every
+worktree therefore gets an index, unique among the repository's live
+worktrees, and a port range. Terminals, shell tools, harness processes and the
+`setup` command started inside the worktree see:
+
+| Variable | Example | Meaning |
+|---|---|---|
+| `OMNIGENT_WORKTREE_INDEX` | `2` | Index, starting at 1 |
+| `OMNIGENT_PORT_BASE` | `3020` | First port of the range, `base + span * index` |
+| `OMNIGENT_PORT_SPAN` | `10` | Ports in the range |
+| `PORT` | `3020` | Same as `OMNIGENT_PORT_BASE`, for tools that honor `PORT` |
+
+The main checkout keeps the unshifted `base`. A removed worktree frees its index
+for the next one. The Worktrees view shows each task's range. Tune or turn off
+the allocation in `.omnigent/worktree.yaml`:
+
+```yaml
+ports:
+  base: 4000   # default 3000
+  span: 20     # default 10
+# ports: false  # no port variables for this repository
+```
+
 #### Cleaning up
 
 Deleting a session with `delete_branch=true` removes its worktree and branch,
