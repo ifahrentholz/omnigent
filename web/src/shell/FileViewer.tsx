@@ -126,13 +126,41 @@ const MonacoDiffViewer = lazy(() =>
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Escape a string for use inside a RegExp. */
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
- * Classify comments into open/addressed and remap open draft comments to
- * their correct absolute offsets when the file content has changed.
+ * Find `anchor` in `content` tolerating re-indentation and re-wrapping: any
+ * whitespace run in the anchor matches any whitespace run in the file. Picks
+ * the match closest to `near`, the comment's stored offset.
+ */
+function findReflowedAnchor(
+  content: string,
+  anchor: string,
+  near: number,
+): { start: number; end: number } | null {
+  const words = anchor.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  let best: { start: number; end: number } | null = null;
+  for (const match of content.matchAll(new RegExp(words.map(escapeForRegExp).join("\\s+"), "g"))) {
+    const start = match.index ?? 0;
+    if (!best || Math.abs(start - near) < Math.abs(best.start - near)) {
+      best = { start, end: start + match[0].length };
+    }
+  }
+  return best;
+}
+
+/**
+ * Classify comments into open/addressed and re-anchor open drafts to the
+ * current file content.
  *
- * - **open**: draft comment — kept with updated offsets if the anchor
- *   moved, or at stored offsets if the anchor is no longer present
- *   (never silently dropped).
+ * - **open**: draft comment. When its anchor text moved (edits above it,
+ *   re-indentation), offsets and line numbers follow it. When the text is
+ *   gone, the comment is kept at its stored offsets with `outdated: true`, so
+ *   it is shown as outdated instead of silently highlighting other text.
  * - **addressed**: handled by the agent or user (status "addressed").
  */
 export function classifyAndRemapComments(
@@ -147,26 +175,14 @@ export function classifyAndRemapComments(
       addressed.push(c);
       continue;
     }
-    // Draft with no anchor — keep as-is.
-    if (!c.anchor_content) {
+    // Draft with no anchor, a PDF anchor (geometry, not text), or a file not
+    // loaded yet — keep at stored offsets.
+    if (!c.anchor_content || isPdfAnchor(c.anchor_content) || !fileContent) {
       open.push(c);
       continue;
     }
-    // PDF anchors store geometry in anchor_content; byte-offset remapping does
-    // not apply to binary PDF content.
-    if (isPdfAnchor(c.anchor_content)) {
-      open.push(c);
-      continue;
-    }
-    // File not yet loaded — keep at stored offsets rather than dropping.
-    if (!fileContent) {
-      open.push(c);
-      continue;
-    }
-    // Search near the stored offset first to handle the common case of a
-    // small edit before the anchor (insertion/deletion shifts the offset by
-    // a few characters). Only fall back to a global search if not found
-    // nearby, to avoid remapping to a different occurrence of the same text.
+    // Search near the stored offset first so a small edit before the anchor
+    // keeps the same occurrence; fall back to a global search.
     const SEARCH_WINDOW = 200;
     const windowStart = Math.max(0, c.start_index - SEARCH_WINDOW);
     const windowEnd = Math.min(
@@ -178,17 +194,24 @@ export function classifyAndRemapComments(
       nearbyIdx !== -1 && nearbyIdx <= windowEnd
         ? nearbyIdx
         : fileContent.indexOf(c.anchor_content);
-    if (idx === -1) {
-      // Anchor not found anywhere — keep at stored offsets rather than dropping.
+    const found =
+      idx !== -1
+        ? { start: idx, end: idx + c.anchor_content.length }
+        : findReflowedAnchor(fileContent, c.anchor_content, c.start_index);
+    if (found === null) {
+      open.push({ ...c, outdated: true });
+      continue;
+    }
+    if (found.start === c.start_index && found.end === c.end_index) {
       open.push(c);
       continue;
     }
-    if (idx !== c.start_index) {
-      // Text moved — update offsets.
-      open.push({ ...c, start_index: idx, end_index: idx + c.anchor_content.length });
-    } else {
-      open.push(c);
-    }
+    open.push({
+      ...c,
+      start_index: found.start,
+      end_index: found.end,
+      ...(c.start_line != null ? lineRange(fileContent, found.start, found.end) : {}),
+    });
   }
 
   return { open, addressed };
@@ -588,6 +611,11 @@ function FileViewerBody({
     () => classifyAndRemapComments(allComments, fileContent),
     [allComments, fileContent],
   );
+  // Outdated comments have no text left to highlight; they stay listed only.
+  const anchoredComments = useMemo(
+    () => openComments.filter((comment) => !comment.outdated),
+    [openComments],
+  );
 
   const handleSetActiveSelection = (selection: ActiveSelection | null) => {
     // Comment navigation supersedes a citation, including clicks outside the editor.
@@ -618,6 +646,8 @@ function FileViewerBody({
     linkedCommentAppliedRef.current = true;
     commentsInitializedRef.current = true;
     setCommentsOpen(true);
+    // An outdated comment has no range left to select; the panel lists it.
+    if (comment.outdated) return;
     handleSetActiveSelection({
       start_index: comment.start_index,
       end_index: comment.end_index,
@@ -1657,7 +1687,7 @@ function FileViewerBody({
                   hideWhitespace={hideWhitespace}
                   wrapLines={wrapLines}
                   conversationId={conversationId}
-                  comments={openComments}
+                  comments={anchoredComments}
                   activeSelection={activeSelection}
                   onSetActiveSelection={handleSetActiveSelection}
                   pendingBodyRef={pendingBodyRef}
@@ -1674,7 +1704,7 @@ function FileViewerBody({
               fileQuery={fileQuery}
               onDirtyChange={handleDirtyChange}
               onSaveStatusChange={setSaveStatus}
-              comments={openComments}
+              comments={anchoredComments}
               addressedComments={addressedComments}
               activeSelection={activeSelection}
               onSetActiveSelection={handleSetActiveSelection}
@@ -1738,6 +1768,7 @@ function FileViewerBody({
                 : undefined
             }
             onClickComment={(comment) => {
+              if (comment.outdated) return;
               handleSetActiveSelection({
                 start_index: comment.start_index,
                 end_index: comment.end_index,
