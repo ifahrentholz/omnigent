@@ -48,7 +48,18 @@ export interface BranchChangesResult {
   mergeBase: string | null;
   /** True once every change of the branch is on its base (merged or squashed). */
   landed: boolean;
+  /** The worktree's port range for dev servers, when one is allocated. */
+  ports: WorktreePorts | null;
   data: BranchChangedFile[];
+}
+
+export interface WorktreePorts {
+  /** Index unique among the repo's live worktrees, starting at 1. */
+  index: number;
+  /** First port of the range; exported as PORT. */
+  base: number;
+  /** Number of ports in the range. */
+  span: number;
 }
 
 export interface BranchFileDiff {
@@ -61,6 +72,7 @@ interface BranchChangesWire {
   base?: string;
   merge_base?: string;
   landed?: boolean;
+  ports?: WorktreePorts | null;
   data: {
     path: string;
     name: string;
@@ -103,6 +115,7 @@ export async function fetchBranchChanges(
       base: null,
       mergeBase: null,
       landed: false,
+      ports: null,
       data: [],
     };
   }
@@ -115,6 +128,7 @@ export async function fetchBranchChanges(
     base: json.base ?? null,
     mergeBase: json.merge_base ?? null,
     landed: json.landed ?? false,
+    ports: json.ports ?? null,
     data: json.data.map((entry) => ({
       path: entry.path,
       name: entry.name,
