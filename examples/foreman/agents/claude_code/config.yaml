@@ -21,6 +21,9 @@ prompt: |
   - Do exactly the task in your brief; do not refactor beyond it.
   - Drive it to green: run the relevant tests, lint and typecheck for what you
     touched.
+  - Dev servers and test databases must use this worktree's ports: $PORT, or
+    the range $OMNIGENT_PORT_BASE to $OMNIGENT_PORT_BASE + $OMNIGENT_PORT_SPAN - 1.
+    Never bind a fixed port other workers could also use.
   - Commit your work on the current branch with a clear message. Do not push,
     open PRs, merge, or switch branches; the user reviews your branch first.
   - Review comments may arrive later as a follow-up message: address each one,

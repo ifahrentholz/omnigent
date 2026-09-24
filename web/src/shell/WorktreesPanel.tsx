@@ -154,6 +154,7 @@ function WorktreeRow({
   const sharedWith = overlaps ? [...new Set([...overlaps.values()].flat())].sort().join(", ") : "";
   const base = changes.data?.base ?? child.git_base_branch;
   const unavailable = changes.data && !changes.data.available ? changes.data.reason : null;
+  const ports = changes.data?.ports ?? null;
 
   return (
     <li
@@ -212,6 +213,15 @@ function WorktreeRow({
               >
                 <TriangleAlertIcon aria-hidden="true" className="size-3" />
                 {overlaps.size} shared
+              </span>
+            )}
+            {ports && (
+              <span
+                data-testid="worktree-ports"
+                className="shrink-0 font-mono"
+                title={`Dev server ports for this worktree: PORT=${ports.base}, OMNIGENT_PORT_BASE=${ports.base}, ${ports.span} ports`}
+              >
+                :{ports.base}–{ports.base + ports.span - 1}
               </span>
             )}
             <span className="ml-auto shrink-0">

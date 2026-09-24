@@ -14030,6 +14030,11 @@ def _build_spawn_env_from_spec(
 
         env = strip_desktop_session_env(env)
         env.update(desktop_session_passthrough(effective_spec.os_env))
+        if cwd is not None:
+            from omnigent.host.worktree_ports import worktree_port_env
+
+            # Tools the harness runs inside a task worktree see its port range.
+            env.update(worktree_port_env(cwd))
 
     if (
         env is not None
