@@ -1,10 +1,11 @@
 // Mutations for landing a task worktree's branch:
 //   POST /v1/sessions/{id}/resources/git/merge  (merge into the base, server-side)
-//   POST /v1/sessions/{id}/events               (ask the worker to open a PR)
+//   POST /v1/sessions/{id}/events               (ask the worker to open a PR,
+//                                                or the orchestrator to coordinate)
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { branchChangesQueryKey } from "@/hooks/useBranchDiff";
+import { BRANCH_CHANGES_QUERY_PREFIX } from "@/hooks/useBranchDiff";
 import { authenticatedFetch } from "@/lib/identity";
 
 export type LandStrategy = "merge" | "squash";
@@ -57,7 +58,8 @@ export function useLandBranch(sessionId: string) {
       return body as LandResult;
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: branchChangesQueryKey(sessionId) });
+      // The base moved: every sibling's changes and conflict verdicts are stale.
+      void queryClient.invalidateQueries({ queryKey: [BRANCH_CHANGES_QUERY_PREFIX] });
     },
   });
 }
@@ -66,6 +68,33 @@ const OPEN_PR_REQUEST =
   "Your task is ready for review. Push your branch and open a pull request with " +
   "`gh pr create` (clear title, what changed, how you verified it). Do not merge it.";
 
+/** Post a user message into a session. */
+async function postUserMessage(sessionId: string, text: string): Promise<void> {
+  const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "message",
+      data: { role: "user", content: [{ type: "input_text", text }] },
+    }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+}
+
+/**
+ * Tell the orchestrator that parallel tasks will conflict so it can sequence them.
+ *
+ * @param orchestratorId - The session that dispatched the tasks.
+ */
+export function useNotifyOrchestrator(orchestratorId: string | undefined) {
+  return useMutation({
+    mutationFn: async (text: string) => {
+      if (!orchestratorId) throw new Error("no orchestrator session");
+      await postUserMessage(orchestratorId, text);
+    },
+  });
+}
+
 /**
  * Ask a worker session to push its branch and open a pull request.
  *
@@ -73,16 +102,6 @@ const OPEN_PR_REQUEST =
  */
 export function useRequestPullRequest(sessionId: string) {
   return useMutation({
-    mutationFn: async () => {
-      const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "message",
-          data: { role: "user", content: [{ type: "input_text", text: OPEN_PR_REQUEST }] },
-        }),
-      });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    },
+    mutationFn: () => postUserMessage(sessionId, OPEN_PR_REQUEST),
   });
 }

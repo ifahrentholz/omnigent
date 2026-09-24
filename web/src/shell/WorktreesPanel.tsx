@@ -5,16 +5,19 @@
 // (committed, uncommitted and untracked, via the git/changes endpoint). It
 // expands into the changed files; opening one lands on the child session with
 // the file in its branch diff (`?file=…&diff=1&diffsrc=branch`), where the
-// regular comment layer annotates that worktree.
+// regular comment layer annotates that worktree. Tasks sharing files get a
+// `git merge-tree` dry-run that tells real conflicts from clean overlaps.
 
 import { ChevronDownIcon, ChevronRightIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
 import { RunningDot } from "@/components/RunningDot";
 import {
+  type BranchConflictVerdict,
   DIFF_SOURCE_PARAM,
   findOverlaps,
   useBranchChanges,
+  useBranchConflicts,
   useBranchChangesForSessions,
 } from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
@@ -22,6 +25,7 @@ import {
   LandError,
   type LandStrategy,
   useLandBranch,
+  useNotifyOrchestrator,
   useRequestPullRequest,
 } from "@/hooks/useLandBranch";
 import { Link, useLocation } from "@/lib/routing";
@@ -33,6 +37,35 @@ interface WorktreesPanelProps {
   conversationId: string;
   /** Direct child sessions of the orchestrator. */
   sessions: ChildSessionInfo[];
+  /** The orchestrator session, notified about conflicting tasks. */
+  orchestratorId?: string;
+}
+
+/** Another task changing some of the same files. */
+interface RivalTask {
+  branch: string;
+  title: string;
+}
+
+/** Message asking the orchestrator to sequence conflicting tasks. */
+export function conflictNotice(
+  task: { title: string; branch: string; sessionId: string },
+  base: string | null,
+  conflicts: BranchConflictVerdict[],
+  rivals: RivalTask[],
+): string {
+  const titleOf = (ref: string) => rivals.find((rival) => rival.branch === ref)?.title ?? ref;
+  const lines = conflicts.map(
+    (verdict) =>
+      `- with ${verdict.ref === base ? `the base ${verdict.ref}` : `${titleOf(verdict.ref)} (${verdict.ref})`}: ${verdict.files.join(", ")}`,
+  );
+  return [
+    `Merge conflicts predicted for task "${task.title}" (${task.branch}, session ${task.sessionId}):`,
+    ...lines,
+    "",
+    "Please coordinate: let one task finish and land first, then ask the other " +
+      `(sys_session_send) to rebase onto ${base ?? "its base"} and resolve the conflicts.`,
+  ].join("\n");
 }
 
 /** Search string that opens `path` in a session's branch diff. */
@@ -86,7 +119,7 @@ function taskTitle(child: ChildSessionInfo): string {
   return child.task_summary || child.session_name || child.title || child.id;
 }
 
-export function WorktreesPanel({ conversationId, sessions }: WorktreesPanelProps) {
+export function WorktreesPanel({ conversationId, sessions, orchestratorId }: WorktreesPanelProps) {
   const worktrees = sessions.filter((child) => child.git_branch);
   // Files touched by several parallel tasks will conflict when they land.
   const branchLists = useBranchChangesForSessions(worktrees.map((child) => child.id));
@@ -97,6 +130,21 @@ export function WorktreesPanel({ conversationId, sessions }: WorktreesPanelProps
       paths: branchLists[index]?.data?.data.map((file) => file.path) ?? [],
     })),
   );
+  const pathsOf = new Map(
+    worktrees.map((child, index) => [
+      child.id,
+      new Set(branchLists[index]?.data?.data.map((file) => file.path) ?? []),
+    ]),
+  );
+  const rivalsOf = (child: ChildSessionInfo): RivalTask[] => {
+    const mine = pathsOf.get(child.id) ?? new Set<string>();
+    return worktrees
+      .filter(
+        (other) =>
+          other.id !== child.id && [...(pathsOf.get(other.id) ?? [])].some((p) => mine.has(p)),
+      )
+      .map((other) => ({ branch: other.git_branch!, title: taskTitle(other) }));
+  };
   if (worktrees.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
@@ -124,6 +172,8 @@ export function WorktreesPanel({ conversationId, sessions }: WorktreesPanelProps
                   child={child}
                   isActive={child.id === conversationId}
                   overlaps={overlaps.get(child.id)}
+                  rivals={rivalsOf(child)}
+                  orchestratorId={orchestratorId}
                 />
               ))}
             </ul>
@@ -138,11 +188,16 @@ function WorktreeRow({
   child,
   isActive,
   overlaps,
+  rivals,
+  orchestratorId,
 }: {
   child: ChildSessionInfo;
   isActive: boolean;
   /** Path -> other tasks changing it too; absent when nothing overlaps. */
   overlaps?: Map<string, string[]>;
+  /** Tasks sharing files with this one, to dry-run merges against. */
+  rivals: RivalTask[];
+  orchestratorId?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const location = useLocation();
@@ -155,6 +210,22 @@ function WorktreeRow({
   const base = changes.data?.base ?? child.git_base_branch;
   const unavailable = changes.data && !changes.data.available ? changes.data.reason : null;
   const ports = changes.data?.ports ?? null;
+  const prediction = useBranchConflicts(
+    child.id,
+    rivals.map((rival) => rival.branch),
+    { enabled: files.length > 0 },
+  );
+  const conflicts = (prediction.data?.results ?? []).filter((verdict) => verdict.clean === false);
+  const baseConflict = conflicts.find((verdict) => verdict.ref === base);
+  const rivalConflicts = conflicts.filter((verdict) => verdict !== baseConflict);
+  const overlapsClean =
+    !!overlaps &&
+    rivals.length > 0 &&
+    rivals.every(
+      (rival) =>
+        prediction.data?.results.find((verdict) => verdict.ref === rival.branch)?.clean === true,
+    );
+  const committedOnly = prediction.data?.dirty ? " (committed changes only)" : "";
 
   return (
     <li
@@ -205,14 +276,38 @@ function WorktreeRow({
                 → <span className="font-mono">{base}</span>
               </span>
             )}
+            {baseConflict && (
+              <span
+                data-testid="worktree-base-conflict"
+                className="flex shrink-0 items-center gap-0.5 text-destructive"
+                title={`Conflicts with ${base}${committedOnly}: ${baseConflict.files.join(", ")}`}
+              >
+                <TriangleAlertIcon aria-hidden="true" className="size-3" />
+                conflicts with {base}
+              </span>
+            )}
             {overlaps && (
               <span
                 data-testid="worktree-overlap"
-                className="flex shrink-0 items-center gap-0.5 text-warning"
-                title={`Also changed by ${sharedWith}; landing both may conflict`}
+                data-conflict={rivalConflicts.length > 0 ? "true" : undefined}
+                className={cn(
+                  "flex shrink-0 items-center gap-0.5",
+                  rivalConflicts.length > 0
+                    ? "text-destructive"
+                    : overlapsClean
+                      ? "text-muted-foreground"
+                      : "text-warning",
+                )}
+                title={
+                  rivalConflicts.length > 0
+                    ? `Conflicts with ${rivalConflicts.map((verdict) => verdict.ref).join(", ")}${committedOnly}`
+                    : overlapsClean
+                      ? `Also changed by ${sharedWith}; predicted to merge cleanly${committedOnly}`
+                      : `Also changed by ${sharedWith}; landing both may conflict`
+                }
               >
                 <TriangleAlertIcon aria-hidden="true" className="size-3" />
-                {overlaps.size} shared
+                {rivalConflicts.length > 0 ? "conflict" : `${overlaps.size} shared`}
               </span>
             )}
             {ports && (
@@ -233,6 +328,19 @@ function WorktreeRow({
       {expanded && (
         <div className="pb-2 pl-7 pr-2">
           <LandActions sessionId={child.id} base={base ?? null} disabled={child.busy} />
+          {conflicts.length > 0 && (
+            <ConflictDetails
+              conflicts={conflicts}
+              notice={conflictNotice(
+                { title, branch: child.git_branch ?? "", sessionId: child.id },
+                base ?? null,
+                conflicts,
+                rivals,
+              )}
+              orchestratorId={orchestratorId}
+              committedOnly={committedOnly !== ""}
+            />
+          )}
           {unavailable ? (
             <p className="text-xs text-muted-foreground">{unavailable}</p>
           ) : changes.isError ? (
@@ -383,6 +491,47 @@ function LandActions({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function ConflictDetails({
+  conflicts,
+  notice,
+  orchestratorId,
+  committedOnly,
+}: {
+  conflicts: BranchConflictVerdict[];
+  notice: string;
+  orchestratorId?: string;
+  committedOnly: boolean;
+}) {
+  const notify = useNotifyOrchestrator(orchestratorId);
+  return (
+    <div data-testid="worktree-conflicts" className="mb-2 flex flex-col gap-1 text-xs">
+      <p className="font-medium text-destructive">
+        Predicted merge conflicts{committedOnly ? " (committed changes only)" : ""}:
+      </p>
+      <ul className="ml-3 list-disc">
+        {conflicts.map((verdict) => (
+          <li key={verdict.ref}>
+            <span className="font-mono">{verdict.ref}</span>:{" "}
+            <span className="font-mono">{verdict.files.join(", ")}</span>
+          </li>
+        ))}
+      </ul>
+      {orchestratorId && (
+        <button
+          type="button"
+          disabled={notify.isPending || notify.isSuccess}
+          title="Ask the orchestrator to sequence these tasks"
+          onClick={() => notify.mutate(notice)}
+          className="self-start rounded-full border border-border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+        >
+          {notify.isSuccess ? "Orchestrator notified" : "Tell orchestrator"}
+        </button>
+      )}
+      {notify.isError && <p className="text-destructive">{notify.error.message}</p>}
     </div>
   );
 }

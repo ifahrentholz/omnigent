@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { authenticatedFetch } from "@/lib/identity";
-import { fetchBranchChanges } from "./useBranchDiff";
+import { fetchBranchChanges, fetchBranchConflicts } from "./useBranchDiff";
 
 vi.mock("@/lib/identity", () => ({ authenticatedFetch: vi.fn() }));
 
@@ -68,5 +68,53 @@ describe("fetchBranchChanges", () => {
       ports: null,
       data: [],
     });
+  });
+});
+
+describe("fetchBranchConflicts", () => {
+  it("asks for the sibling branches and returns the verdicts", async () => {
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          object: "git.conflicts",
+          head: "abc",
+          base: "main",
+          dirty: true,
+          supported: true,
+          results: [
+            { ref: "main", clean: true, files: [] },
+            { ref: "omni/b", clean: false, files: ["app.py"] },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await fetchBranchConflicts("conv_a", ["omni/b", "omni/c"]);
+
+    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith(
+      "/v1/sessions/conv_a/resources/git/conflicts?against=omni%2Fb%2Comni%2Fc",
+    );
+    expect(result).toEqual({
+      base: "main",
+      dirty: true,
+      supported: true,
+      results: [
+        { ref: "main", clean: true, files: [] },
+        { ref: "omni/b", clean: false, files: ["app.py"] },
+      ],
+    });
+  });
+
+  it("returns null for a session without a git workspace", async () => {
+    vi.mocked(authenticatedFetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: "workspace is not a git repository" }), {
+        status: 400,
+      }),
+    );
+    expect(await fetchBranchConflicts("conv_plain", [])).toBeNull();
+    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith(
+      "/v1/sessions/conv_plain/resources/git/conflicts",
+    );
   });
 });
