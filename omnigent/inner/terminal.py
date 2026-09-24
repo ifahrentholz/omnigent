@@ -29,6 +29,7 @@ from typing import Any, TypeAlias, cast
 from omnigent._platform import IS_WINDOWS
 from omnigent.cli_invocation import cli_invocation
 from omnigent.debug_logging import debug_event
+from omnigent.host.worktree_ports import worktree_port_env
 from omnigent.native import owner_claim
 from omnigent.process_logging import redact_log_text
 from omnigent.runner.identity import strip_runner_auth_secrets
@@ -1484,6 +1485,8 @@ class TerminalInstance:
         else:
             env = {}
         env.pop("OMNIGENT_TMUX_SOCK", None)
+        # A terminal inside a task worktree gets that worktree's port range.
+        env.update(worktree_port_env(effective_cwd))
         # Apply per-terminal env overrides (takes precedence over inherited env).
         env.update(self.env)
         # Apply exclusions last so overrides cannot leak credentials to MCP servers.

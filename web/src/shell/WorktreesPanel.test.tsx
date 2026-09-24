@@ -70,13 +70,17 @@ function child(overrides: Partial<ChildSessionInfo>): ChildSessionInfo {
   };
 }
 
-function branchResult(files: { path: string; added: number; removed: number }[]) {
+function branchResult(
+  files: { path: string; added: number; removed: number }[],
+  ports: { index: number; base: number; span: number } | null = null,
+) {
   return {
     data: {
       available: true,
       reason: null,
       base: "main",
       mergeBase: "abc",
+      ports,
       data: files.map((file) => ({
         path: file.path,
         name: file.path,
@@ -123,6 +127,24 @@ describe("WorktreesPanel", () => {
     expect(screen.getByText("−1")).toBeTruthy();
     expect(screen.getByText("2 files")).toBeTruthy();
     expect(vi.mocked(useBranchChanges)).toHaveBeenCalledWith("conv_wt");
+  });
+
+  it("shows the worktree's dev server port range when one is allocated", () => {
+    vi.mocked(useBranchChanges).mockReturnValue(
+      branchResult([], { index: 2, base: 3020, span: 10 }),
+    );
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[child({ id: "conv_wt", git_branch: "omni/login-a1b2c3" })]}
+        />
+      </MemoryRouter>,
+    );
+
+    const ports = screen.getByTestId("worktree-ports");
+    expect(ports.textContent).toBe(":3020–3029");
+    expect(ports.getAttribute("title")).toContain("PORT=3020");
   });
 
   it("opens a file straight into the child's branch diff", () => {
