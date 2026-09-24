@@ -595,10 +595,12 @@ def remove_worktree(
     worktree_path: str,
     branch: str | None = None,
     delete_branch: bool = False,
+    force: bool = True,
 ) -> None:
     """Remove a git worktree and optionally delete its branch.
 
-    Removes the directory with ``--force``, then (if requested) deletes
+    Removes the directory (with ``--force`` unless ``force`` is off, in
+    which case git refuses a worktree with local changes), then (if requested) deletes
     the branch — in that order, since git refuses to delete a branch
     still checked out in a linked worktree. ``git worktree remove``
     refuses to remove the main work tree.
@@ -610,6 +612,8 @@ def remove_worktree(
         deletion.
     :param delete_branch: When ``True``, run ``git branch -D`` on
         ``branch`` after removing the worktree directory.
+    :param force: When ``False``, keep a worktree with uncommitted or
+        untracked changes and raise instead.
     :raises WorktreeError: If the worktree path is missing/invalid, or
         a git command fails.
     """
@@ -624,7 +628,7 @@ def remove_worktree(
     if os.path.normcase(root.stdout.strip()) != os.path.normcase(os.path.abspath(worktree_path)):
         raise WorktreeError(f"path is not the expected worktree root: {worktree_path}")
     remove_result = _run_git(
-        ["worktree", "remove", "--force", root.stdout.strip()],
+        ["worktree", "remove", *(["--force"] if force else []), root.stdout.strip()],
         cwd=main_repo,
     )
     if remove_result.returncode != 0:
