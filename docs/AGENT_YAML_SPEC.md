@@ -582,6 +582,18 @@ Deleting a session with `delete_branch=true` removes its worktree and branch,
 and the worktrees and branches of all its sub-agents as well. Archiving or
 closing a sub-agent keeps its worktree, so the branch stays reviewable.
 
+Leftover worktrees of archived or deleted sessions can be removed with:
+
+```sh
+omnigent worktrees prune --dry-run         # list them
+omnigent worktrees prune --delete-branch   # remove them after confirmation
+```
+
+It only considers `omni/*` worktrees whose session is archived or gone, never
+those of live sessions. It skips worktrees with uncommitted changes unless
+`--force` is given. Branches are kept, and `--delete-branch` deletes only those
+whose work already landed on their base or that never changed anything.
+
 ### Capping running sub-agents
 
 `spawn_bounds` limits dispatches per turn. To bound how many sub-agents run
