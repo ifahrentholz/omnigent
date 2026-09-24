@@ -125,7 +125,11 @@ export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanel
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden bg-card">
         <ViewModeToggle viewMode={viewMode} onViewModeChange={setViewMode} />
-        <WorktreesPanel conversationId={conversationId} sessions={children} />
+        <WorktreesPanel
+          conversationId={conversationId}
+          sessions={children}
+          orchestratorId={rootSessionId}
+        />
       </div>
     );
   }

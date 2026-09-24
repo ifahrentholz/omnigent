@@ -11456,6 +11456,12 @@ def create_runner_app(
     async def read_branch_changes(session_id: str, base: str | None = None) -> JSONResponse:
         return await _branch_diff_call(session_id, "branch_changes", base=base)
 
+    @app.get("/v1/sessions/{session_id}/resources/git/conflicts")
+    async def read_branch_conflicts(
+        session_id: str, base: str | None = None, against: str | None = None
+    ) -> JSONResponse:
+        return await _branch_diff_call(session_id, "branch_conflicts", base=base, against=against)
+
     @app.get("/v1/sessions/{session_id}/resources/git/diff/{relative_path:path}")
     async def read_branch_file_diff(
         session_id: str,

@@ -187,6 +187,77 @@ export function useBranchChanges(
   });
 }
 
+/** Predicted outcome of merging the branch with one other branch. */
+export interface BranchConflictVerdict {
+  /** The compared branch, e.g. "main" or a sibling task's branch. */
+  ref: string;
+  /** True when the merge is clean; null when the branch could not be resolved. */
+  clean: boolean | null;
+  /** Paths that would conflict. */
+  files: string[];
+}
+
+export interface BranchConflictsResult {
+  /** Base branch the first verdict compares against. */
+  base: string | null;
+  /** Uncommitted edits exist; the prediction covers commits only. */
+  dirty: boolean;
+  /** False when the host's git is too old for `merge-tree --write-tree`. */
+  supported: boolean;
+  /** One verdict per compared branch, the base first. */
+  results: BranchConflictVerdict[];
+}
+
+/**
+ * Dry-run merges of a session's branch with its base and other branches.
+ *
+ * @returns The verdicts, or null when the session has no git workspace.
+ */
+export async function fetchBranchConflicts(
+  sessionId: string,
+  against: string[],
+): Promise<BranchConflictsResult | null> {
+  const res = await authenticatedFetch(
+    sessionUrl(sessionId, "conflicts", { against: against.length ? against.join(",") : null }),
+  );
+  if (res.status === 400 || res.status === 404) return null;
+  if (res.status === 503 && (await isRunnerUnavailable503(res))) throw new RunnerOfflineError();
+  if (!res.ok) throw new Error(await errorMessage(res));
+  const json = (await res.json()) as Partial<BranchConflictsResult>;
+  return {
+    base: json.base ?? null,
+    dirty: json.dirty ?? false,
+    supported: json.supported ?? true,
+    results: json.results ?? [],
+  };
+}
+
+/**
+ * Predicted merge conflicts of a task branch with its base and sibling branches.
+ *
+ * Shares the branch-changes key prefix, so landing any task refreshes it.
+ *
+ * @param sessionId - The worktree sub-agent session.
+ * @param against - Other task branches to compare with, e.g. overlapping siblings.
+ */
+export function useBranchConflicts(
+  sessionId: string | undefined,
+  against: string[],
+  options: { enabled?: boolean } = {},
+) {
+  const enabled = options.enabled ?? true;
+  const serveable = useWorkspaceServeable(sessionId);
+  const key = [...against].sort().join(",");
+  return useQuery({
+    queryKey: [BRANCH_CHANGES_QUERY_PREFIX, sessionId, "conflicts", key] as const,
+    queryFn: () => fetchBranchConflicts(sessionId!, key ? key.split(",") : []),
+    enabled: enabled && !!sessionId && serveable !== false,
+    retry: (failureCount, error) => shouldRetryRunnerOffline(failureCount, error),
+    retryDelay: runnerOfflineRetryDelay,
+    staleTime: 10_000,
+  });
+}
+
 /**
  * Before/after content of one file across the whole branch.
  *

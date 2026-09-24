@@ -528,6 +528,17 @@ class WorkspaceReader:
         except BranchDiffError as exc:
             raise WorkspaceReaderError(400, "invalid_base", str(exc)) from exc
 
+    def branch_conflicts(self, base: str | None, against: str | None) -> _WorkspacePayload:
+        """Predicted merge conflicts with the base and other task branches."""
+        from omnigent.runner.branch_diff import BranchDiffError, branch_conflicts
+
+        try:
+            return cast(
+                "_WorkspacePayload", branch_conflicts(str(self._root), base=base, against=against)
+            )
+        except BranchDiffError as exc:
+            raise WorkspaceReaderError(400, "invalid_base", str(exc)) from exc
+
     def branch_diff(
         self, relative_path: str, base: str | None, previous_path: str | None = None
     ) -> _WorkspacePayload:
