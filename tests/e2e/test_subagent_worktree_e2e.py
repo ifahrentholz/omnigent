@@ -256,6 +256,34 @@ def test_worker_subagent_runs_in_its_own_worktree(
         assert diff.json()["before"] == "hello\n"
         assert diff.json()["after"] == "hello\nfrom the worker\nuncommitted\n"
 
+        # The worktree has its own dev server port range.
+        assert body["ports"]["index"] >= 1
+        assert body["ports"]["base"] == 3000 + 10 * body["ports"]["index"]
+
+        # Conflict prediction: a parallel branch rewriting the same line
+        # really conflicts; the base does not.
+        rival = tmp_path / "rival"
+        subprocess.run(
+            [*git, "worktree", "add", "-q", "-b", "omni/rival", str(rival), "main"], check=True
+        )
+        (rival / "README.md").write_text("hello\nfrom the rival\n")
+        subprocess.run(
+            [*git[:2], str(rival), *git[3:], "commit", "-q", "-am", "rival"], check=True
+        )
+        conflicts = http_client.get(
+            f"/v1/sessions/{child['id']}/resources/git/conflicts",
+            params={"against": "omni/rival"},
+        )
+        assert conflicts.status_code == 200, conflicts.text
+        verdicts = {item["ref"]: item for item in conflicts.json()["results"]}
+        assert verdicts["main"]["clean"] is True
+        assert verdicts["omni/rival"] == {
+            "ref": "omni/rival",
+            "clean": False,
+            "files": ["README.md"],
+        }
+        assert conflicts.json()["dirty"] is True
+
         # The child's file panel reads its own worktree, not the parent repo.
         content = http_client.get(
             f"/v1/sessions/{child['id']}/resources/environments/default/filesystem/new.txt"

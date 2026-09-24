@@ -1403,6 +1403,12 @@ def register_resource_routes(
             },
         )
 
+    @app.get("/v1/sessions/{session_id}/resources/git/conflicts")
+    async def read_branch_conflicts(
+        session_id: str, base: str | None = None, against: str | None = None
+    ) -> JSONResponse:
+        return await _branch_diff_call(session_id, "branch_conflicts", base=base, against=against)
+
     @app.get("/v1/sessions/{session_id}/resources/github")
     async def read_github_info(session_id: str, pr_url: str | None = None) -> JSONResponse:
         return await _github_call(session_id, "github_info", pr_url=pr_url)
