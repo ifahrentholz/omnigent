@@ -48,8 +48,16 @@ WORKSPACE_MISSING_ERROR_CODE = "workspace_missing"
 # The runner intercepts codex ``/side`` and forks an ephemeral side-chat thread:
 CAP_CODEX_SIDE_CHAT = "codex_side_chat"
 
+# ``host.remove_worktree`` honors ``only_if_clean``. Older hosts ignore the
+# field and would force-remove, so the server sends it only to hosts with this.
+CAP_CLEAN_WORKTREE_REMOVE = "clean_worktree_remove"
+
 # Every capability THIS build supports; reported verbatim in the hello frame.
-HOST_CAPABILITIES: list[str] = [CAP_CODEX_SIDE_CHAT, CAP_FILESYSTEM_ATTACHMENTS]
+HOST_CAPABILITIES: list[str] = [
+    CAP_CODEX_SIDE_CHAT,
+    CAP_FILESYSTEM_ATTACHMENTS,
+    CAP_CLEAN_WORKTREE_REMOVE,
+]
 
 
 def workspace_missing_message(workspace: str | PathLike[str] | None) -> str:
@@ -594,12 +602,16 @@ class HostRemoveWorktreeFrame:
     :param delete_branch: When ``True``, ``git branch -D`` after
         removing the directory; when ``False``, remove only the
         directory.
+    :param only_if_clean: When ``True``, fail instead of removing a
+        worktree with uncommitted or untracked changes. Only sent to hosts
+        advertising :data:`CAP_CLEAN_WORKTREE_REMOVE`.
     """
 
     request_id: str
     worktree_path: str
     branch: str | None = None
     delete_branch: bool = False
+    only_if_clean: bool = False
 
 
 @dataclass
@@ -1349,6 +1361,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "worktree_path": frame.worktree_path,
                 "branch": frame.branch,
                 "delete_branch": frame.delete_branch,
+                "only_if_clean": frame.only_if_clean,
             }
         )
     if isinstance(frame, HostRemoveWorktreeResultFrame):
@@ -2022,13 +2035,15 @@ def _decode_remove_worktree(msg: _JsonObject) -> HostRemoveWorktreeFrame:
     :returns: Typed host.remove_worktree frame.
     """
     delete_branch = msg.get("delete_branch", False)
-    if not isinstance(delete_branch, bool):
-        raise ValueError("frame field must be a bool: 'delete_branch'")
+    only_if_clean = msg.get("only_if_clean", False)
+    if not isinstance(delete_branch, bool) or not isinstance(only_if_clean, bool):
+        raise ValueError("frame fields must be bools: 'delete_branch', 'only_if_clean'")
     return HostRemoveWorktreeFrame(
         request_id=_required_str(msg, "request_id"),
         worktree_path=_required_str(msg, "worktree_path"),
         branch=_optional_nullable_str(msg, "branch"),
         delete_branch=delete_branch,
+        only_if_clean=only_if_clean,
     )
 
 
