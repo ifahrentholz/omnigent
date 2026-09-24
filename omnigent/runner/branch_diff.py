@@ -357,3 +357,92 @@ def branch_file_diff(
 
 
 __all__ = ["BranchDiffError", "branch_changes", "branch_file_diff", "resolve_base"]
+
+
+def _resolve_commit(root: str, ref: str) -> str | None:
+    """
+    Resolve a branch to its commit, preferring the local branch over ``origin/``.
+
+    :param root: Absolute workspace directory.
+    :param ref: Branch name, e.g. ``"main"`` or ``"omni/login-a1b2c3"``.
+    :returns: The commit SHA, or ``None`` when neither resolves.
+    """
+    for candidate in (ref, f"origin/{ref}"):
+        rc, out = _git(
+            root, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{candidate}^{{commit}}"
+        )
+        if rc == 0 and out.strip():
+            return out.strip()
+    return None
+
+
+def _merge_tree_conflicts(root: str, ours: str, theirs: str) -> list[str] | None:
+    """
+    Dry-run a merge of two commits without touching any worktree.
+
+    :param root: Absolute workspace directory.
+    :param ours: Commit SHA.
+    :param theirs: Commit SHA.
+    :returns: Conflicting paths (empty when the merge is clean), or ``None``
+        when git cannot run the dry-run (``merge-tree --write-tree`` needs
+        git 2.38+).
+    """
+    rc, out = _git(
+        root, "merge-tree", "--write-tree", "--name-only", "--no-messages", ours, theirs
+    )
+    if rc == 0:
+        return []
+    if rc != 1:
+        return None
+    # First line is the (conflicted) tree id, then one path per line.
+    return sorted({line for line in out.splitlines()[1:] if line})
+
+
+def branch_conflicts(
+    root: str,
+    *,
+    session_id: str | None = None,
+    base: str | None = None,
+    against: str | None = None,
+) -> dict[str, Any]:
+    """
+    Predict which files would conflict when landing this branch.
+
+    Compares the branch's committed ``HEAD`` with its base and with other
+    task branches (parallel worktrees). Uncommitted edits are not part of the
+    prediction; ``dirty`` flags them.
+
+    :param root: Absolute workspace directory, e.g. a task worktree.
+    :param session_id: Unused; accepted for the shared call convention.
+    :param base: Base branch, e.g. ``"main"``; inferred when ``None``.
+    :param against: Comma-separated other branches, e.g. sibling task branches.
+    :returns: ``{"head", "dirty", "supported", "results": [{"ref", "clean",
+        "files"}]}``; a ref that cannot be resolved has ``clean: None``.
+    :raises BranchDiffError: On a non-git workspace or unresolvable base.
+    """
+    del session_id
+    base_name = resolve_base(root, base)
+    _merge_base(root, base_name)
+    head = _resolve_commit(root, "HEAD")
+    if head is None:
+        raise BranchDiffError("branch has no commits")
+    rc, status = _git(root, "status", "--porcelain", "--untracked-files=no")
+    refs = [base_name, *(ref.strip() for ref in (against or "").split(",") if ref.strip())]
+    results: list[dict[str, Any]] = []
+    supported = True
+    for ref in dict.fromkeys(refs):
+        commit = _resolve_commit(root, ref)
+        files = _merge_tree_conflicts(root, head, commit) if commit is not None else None
+        if commit is not None and files is None:
+            supported = False
+        results.append(
+            {"ref": ref, "clean": None if files is None else not files, "files": files or []}
+        )
+    return {
+        "object": "git.conflicts",
+        "head": head,
+        "base": base_name,
+        "dirty": rc == 0 and bool(status.strip()),
+        "supported": supported,
+        "results": results,
+    }

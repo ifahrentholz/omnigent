@@ -3420,6 +3420,11 @@ class HostProcess:
             return r.github_pr_diff(session_id, cast("str | None", params.get("pr_url")))
         if op == "branch_changes":
             return r.branch_changes(cast("str | None", params.get("base")))
+        if op == "branch_conflicts":
+            return r.branch_conflicts(
+                cast("str | None", params.get("base")),
+                cast("str | None", params.get("against")),
+            )
         if op == "branch_diff":
             return r.branch_diff(
                 str(params.get("path", "")),

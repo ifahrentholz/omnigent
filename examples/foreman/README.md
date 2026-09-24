@@ -63,6 +63,12 @@ Each worktree also gets its own port range for dev servers (`$PORT`,
 
 ## Landing a task
 
+Tasks that change the same files get a badge in the Worktrees view. A
+`git merge-tree` dry-run tells a clean overlap ("2 shared") from a real
+conflict ("conflict", or "conflicts with main" once another task landed). It
+covers committed work only. Expand the task to see the conflicting files and
+**Tell orchestrator**, which asks foreman to sequence the tasks.
+
 foreman never merges on its own. In the Worktrees view, expand a task and
 choose one of:
 
