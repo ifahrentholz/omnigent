@@ -534,6 +534,14 @@ function CommentCard({
                 {statusLabel}
               </span>
             )}
+            {c.outdated && (
+              <span
+                className="rounded bg-warning/15 px-1.5 py-0.5 text-[10px] text-warning w-fit"
+                title="The commented text is no longer in this file"
+              >
+                Outdated
+              </span>
+            )}
           </div>
           {(onEdit || onDelete || onCopyLink) && (
             <div className="flex shrink-0 items-center gap-2 mr-0.5">

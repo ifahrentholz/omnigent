@@ -72,6 +72,17 @@ afterEach(cleanup);
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+describe("CommentsPanel outdated comments", () => {
+  it("badges a comment whose text is gone and keeps it in the open list", () => {
+    renderPanel([{ ...makeComment("c_old"), outdated: true }, makeComment("c_ok")], []);
+
+    const badges = screen.getAllByText("Outdated");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].getAttribute("title")).toContain("no longer in this file");
+    expect(screen.getByText("Comment c_old")).toBeTruthy();
+  });
+});
+
 describe("CommentsPanel copy-comment-link", () => {
   it("shows a link button for each open comment when onCopyCommentLink is provided", () => {
     renderPanel([makeComment("c1"), makeComment("c2")], [], vi.fn());

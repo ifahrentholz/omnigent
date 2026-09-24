@@ -37,6 +37,11 @@ export interface Comment {
   end_line?: number | null;
   /** Diff side: "after" (current file) or "before" (a removed line). */
   side?: "before" | "after" | null;
+  /**
+   * Client-side only: the anchor text is no longer in the current file, so
+   * the stored range no longer points at what was commented on.
+   */
+  outdated?: boolean;
 }
 
 /**
