@@ -14839,6 +14839,48 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/resources/git/resolve": {
+      "post": {
+        "description": "Resolve the task branch's conflicts with its base by hand.\n\nRuns on the runner, in the session's worktree. `action` is one of\n`status` (the merge state with each unmerged file's versions),\n`start` (merge the base without committing), `resolve` (write\n`content` or keep a `side` for one unmerged `path`), `complete`\n(commit the merge) or `abort`. A refused step answers 409.\n\n**Returns:** The step's result, see `omnigent.runner.branch_resolve`.",
+        "operationId": "resolve_branch_conflicts_v1_sessions__session_id__resources_git_resolve_post",
+        "parameters": [
+          {
+            "description": "The task session, e.g. a worktree sub-agent.",
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Branch Conflicts",
+        "tags": [
+          "session_resources"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/resources/github": {
       "get": {
         "description": "Return GitHub context (repo, branch, base ref, PR) for a session.\n\nProxies to the runner, which shells out to `gh`/`git` in the\nworkspace. Returns an `available: false` payload (200) when `gh` is\nmissing or the workspace is not a git repo.\n\n**Returns:** The `session.github.info` object.",

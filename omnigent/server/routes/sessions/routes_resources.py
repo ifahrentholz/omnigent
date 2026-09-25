@@ -3057,6 +3057,48 @@ def register_resources_routes(
             return JSONResponse(status_code=status, content=result)
         return result
 
+    @router.post("/sessions/{session_id}/resources/git/resolve", response_model=None)
+    async def resolve_branch_conflicts(request: Request, session_id: str) -> Any:
+        """
+        Resolve the task branch's conflicts with its base by hand.
+
+        Runs on the runner, in the session's worktree. ``action`` is one of
+        ``status`` (the merge state with each unmerged file's versions),
+        ``start`` (merge the base without committing), ``resolve`` (write
+        ``content`` or keep a ``side`` for one unmerged ``path``), ``complete``
+        (commit the merge) or ``abort``. A refused step answers 409.
+
+        :param request: JSON body ``{action, base?, path?, content?, side?, message?}``.
+        :param session_id: The task session, e.g. a worktree sub-agent.
+        :returns: The step's result, see ``omnigent.runner.branch_resolve``.
+        """
+        conv = await _validate_session(session_id, request, LEVEL_EDIT)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Expected a JSON object")
+        action = body.get("action")
+        if action not in ("status", "start", "resolve", "complete", "abort"):
+            raise HTTPException(
+                status_code=400,
+                detail="action must be one of status, start, resolve, complete, abort",
+            )
+        base = body.get("base") or conv.git_base_branch
+        if not isinstance(base, str) or not base:
+            raise HTTPException(
+                status_code=400, detail="Session has no base branch; pass one as 'base'"
+            )
+        payload = {k: body.get(k) for k in ("path", "content", "side", "message")}
+        status, result = await _proxy_post_to_runner(
+            session_id,
+            f"/v1/sessions/{session_id}/resources/git/resolve",
+            {"action": action, "base": base, **payload},
+            conv,
+            timeout=150.0,
+        )
+        if status >= 400:
+            return JSONResponse(status_code=status, content=result)
+        return result
+
     @router.post("/sessions/{session_id}/resources/github/prs", response_model=None)
     async def update_session_github_pr(request: Request, session_id: str) -> dict[str, Any]:
         conv = await _validate_session(session_id, request, LEVEL_EDIT)

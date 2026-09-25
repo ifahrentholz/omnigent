@@ -29,6 +29,12 @@ vi.mock("@/hooks/useBranchDiff", async (importOriginal) => ({
   useBranchConflicts: vi.fn(),
 }));
 
+vi.mock("./ConflictResolverDialog", () => ({
+  ConflictResolverDialog: ({ sessionId, base }: { sessionId: string; base: string }) => (
+    <div data-testid="conflict-resolver-stub" data-session={sessionId} data-base={base} />
+  ),
+}));
+
 vi.mock("@/hooks/useLandBranch", async (importOriginal) => ({
   ...(await importOriginal<typeof LandBranchModule>()),
   useLandBranch: vi.fn(),
@@ -480,6 +486,37 @@ describe("conflict resolution", () => {
       [{ sessionId: "conv_wt", base: "main", files: ["README.md"], note: "main wins" }],
       expect.anything(),
     );
+  });
+
+  it("opens the manual resolver, but not while the worker runs", () => {
+    baseConflict();
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[child({ id: "conv_wt", git_branch: "omni/login-a1b2c3" })]}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    expect(screen.queryByTestId("conflict-resolver-stub")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Resolve manually…" }));
+    const stub = screen.getByTestId("conflict-resolver-stub");
+    expect(stub.getAttribute("data-session")).toBe("conv_wt");
+    expect(stub.getAttribute("data-base")).toBe("main");
+
+    cleanup();
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[child({ id: "conv_wt", git_branch: "omni/login-a1b2c3", busy: true })]}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    expect(screen.getByRole("button", { name: "Resolve manually…" })).toBeDisabled();
   });
 
   it("explains that one of two conflicting open tasks has to land first", () => {
