@@ -33,6 +33,7 @@ import {
   useRequestUpdateFromBase,
 } from "@/hooks/useLandBranch";
 import { Link, useLocation } from "@/lib/routing";
+import { ConflictResolverDialog } from "./ConflictResolverDialog";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
 import { cn } from "@/lib/utils";
 
@@ -380,6 +381,8 @@ function WorktreeRow({
           {conflicts.length > 0 && (
             <ConflictDetails
               sessionId={child.id}
+              branch={child.git_branch ?? ""}
+              busy={child.busy}
               base={base ?? null}
               baseConflict={baseConflict}
               conflicts={conflicts}
@@ -590,6 +593,8 @@ function LandActions({
  */
 function ConflictDetails({
   sessionId,
+  branch,
+  busy,
   base,
   baseConflict,
   conflicts,
@@ -598,6 +603,8 @@ function ConflictDetails({
   committedOnly,
 }: {
   sessionId: string;
+  branch: string;
+  busy: boolean;
   base: string | null;
   baseConflict?: BranchConflictVerdict;
   conflicts: BranchConflictVerdict[];
@@ -608,6 +615,7 @@ function ConflictDetails({
   const notify = useNotifyOrchestrator(orchestratorId);
   const resolve = useRequestUpdateFromBase();
   const [resolving, setResolving] = useState(false);
+  const [resolvingManually, setResolvingManually] = useState(false);
   const [note, setNote] = useState("");
   const target = base ?? "base";
   return (
@@ -657,15 +665,39 @@ function ConflictDetails({
             </div>
           </div>
         ) : (
-          <button
-            type="button"
-            disabled={resolve.isSuccess}
-            title={`Ask the worker to merge ${target} into its branch and resolve the conflicts`}
-            onClick={() => setResolving(true)}
-            className="self-start rounded-full border border-border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
-          >
-            {resolve.isSuccess ? "Resolution requested" : "Resolve…"}
-          </button>
+          <div className="flex flex-wrap items-center gap-1">
+            <button
+              type="button"
+              disabled={resolve.isSuccess}
+              title={`Ask the worker to merge ${target} into its branch and resolve the conflicts`}
+              onClick={() => setResolving(true)}
+              className="rounded-full border border-border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+            >
+              {resolve.isSuccess ? "Resolution requested" : "Resolve…"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              title={
+                busy
+                  ? "Wait until the worker is idle"
+                  : `Merge ${target} into the task branch and resolve the conflicts yourself`
+              }
+              onClick={() => setResolvingManually(true)}
+              className="rounded-full border border-border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+            >
+              Resolve manually…
+            </button>
+            {resolvingManually && (
+              <ConflictResolverDialog
+                sessionId={sessionId}
+                branch={branch}
+                base={base}
+                open
+                onOpenChange={setResolvingManually}
+              />
+            )}
+          </div>
         )
       ) : (
         <p className="text-muted-foreground">
