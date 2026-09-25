@@ -83,6 +83,44 @@ describe("CommentsPanel outdated comments", () => {
   });
 });
 
+describe("CommentsPanel locations", () => {
+  it("labels line ranges and comments on removed lines", () => {
+    renderPanel(
+      [
+        { ...makeComment("c_line"), start_line: 3, end_line: 3 },
+        { ...makeComment("c_removed"), start_line: 7, end_line: 9, side: "before" },
+        makeComment("c_legacy"),
+      ],
+      [],
+    );
+
+    expect(screen.getAllByTestId("comment-location").map((el) => el.textContent)).toEqual([
+      "L3",
+      "L7–9 · removed",
+    ]);
+  });
+
+  it("offers a new comment on removed lines even when an after-side comment has the same offsets", () => {
+    render(
+      <CommentsPanel
+        comments={[makeComment("c_after")]}
+        addressedComments={[]}
+        activeSelection={{ start_index: 0, end_index: 5, anchor_content: "gone", side: "before" }}
+        onAddComment={vi.fn()}
+        onAddressAll={vi.fn()}
+        onEditComment={vi.fn()}
+        onDeleteComment={vi.fn()}
+        onClickComment={vi.fn()}
+        canAddress={false}
+        addressPending={false}
+        canEdit
+      />,
+    );
+
+    expect(screen.getByText("gone")).toBeTruthy();
+  });
+});
+
 describe("CommentsPanel copy-comment-link", () => {
   it("shows a link button for each open comment when onCopyCommentLink is provided", () => {
     renderPanel([makeComment("c1"), makeComment("c2")], [], vi.fn());

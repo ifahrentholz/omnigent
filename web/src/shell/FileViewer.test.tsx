@@ -16,7 +16,7 @@ import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 //      comments panel is open — never from merely opening the file.
 
 import { useMemo } from "react";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,10 +85,12 @@ vi.mock("./CommentsPanel", () => ({
   CommentsPanel: ({
     onClickComment,
     onAddressAll,
+    onAddComment,
     comments,
     addressedComments,
     activeSelection,
   }: {
+    onAddComment?: (body: string) => void;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onClickComment?: (comment: any) => void;
     onAddressAll?: () => void;
@@ -108,6 +110,7 @@ vi.mock("./CommentsPanel", () => ({
         />
       ))}
       <button type="button" aria-label="address all comments" onClick={onAddressAll} />
+      <button type="button" aria-label="save comment" onClick={() => onAddComment?.("body")} />
     </div>
   ),
 }));
@@ -115,16 +118,21 @@ vi.mock("./CommentsPanel", () => ({
 vi.mock("./MonacoDiffViewer", () => ({
   // Surface the toggle-driven props as data attributes so tests can assert the
   // "⋯" menu wires wrap-lines / hide-whitespace through to the diff editor.
+  // A button stands in for selecting removed lines in the original pane.
   MonacoDiffViewer: ({
     position,
     wrapLines,
     hideWhitespace,
     searchOpen,
+    layout,
+    onSetActiveSelection,
   }: {
     position?: { line: number };
     wrapLines?: boolean;
     hideWhitespace?: boolean;
     searchOpen?: boolean;
+    layout?: string;
+    onSetActiveSelection?: (sel: unknown) => void;
   }) => (
     <div
       data-testid="diff-viewer"
@@ -132,7 +140,21 @@ vi.mock("./MonacoDiffViewer", () => ({
       data-wrap-lines={String(!!wrapLines)}
       data-hide-whitespace={String(!!hideWhitespace)}
       data-search-open={String(!!searchOpen)}
-    />
+      data-layout={layout}
+    >
+      <button
+        type="button"
+        aria-label="select removed lines"
+        onClick={() =>
+          onSetActiveSelection?.({
+            start_index: 5,
+            end_index: 13,
+            anchor_content: "old line",
+            side: "before",
+          })
+        }
+      />
+    </div>
   ),
 }));
 
@@ -144,6 +166,7 @@ vi.mock("@/hooks/useIsMobileViewport", () => ({
 
 vi.mock("@/hooks/useComments", async (importOriginal) => ({
   lineRange: (await importOriginal<typeof CommentsModule>()).lineRange,
+  sideOf: (await importOriginal<typeof CommentsModule>()).sideOf,
   useComments: vi.fn(),
   useAddComment: vi.fn(() => ({ mutate: vi.fn() })),
   useUpdateComment: vi.fn(() => ({ mutate: vi.fn() })),
@@ -198,7 +221,7 @@ vi.mock("@/store/chatStore", () => ({
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
-import { useComments } from "@/hooks/useComments";
+import { useAddComment, useComments } from "@/hooks/useComments";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useOptionalCommentSender } from "@/hooks/CommentSenderContext";
 import { useFileDiff } from "@/hooks/useFileDiff";
@@ -958,7 +981,84 @@ function makeAnchoredComment(
   } as Comment;
 }
 
+describe("comments on removed lines", () => {
+  it("saves a selection in the original pane with side and lines from the before content", async () => {
+    const mutate = vi.fn();
+    vi.mocked(useAddComment).mockReturnValue({ mutate } as unknown as ReturnType<
+      typeof useAddComment
+    >);
+    vi.mocked(useFileDiff).mockReturnValue({
+      data: { before: "keep\nold line\n", after: "keep\n" },
+    } as unknown as ReturnType<typeof useFileDiff>);
+    useCommentsMock.mockReturnValue(makeCommentsQuery([]));
+    renderViewer({ open: true, path: "file1.py", initialSearch: "diff=1" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "select removed lines" }));
+    fireEvent.click(screen.getByRole("button", { name: "save comment" }));
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        start_index: 5,
+        end_index: 13,
+        side: "before",
+        start_line: 2,
+        end_line: 2,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("opens the split diff when a comment on removed lines is clicked", async () => {
+    const removed = {
+      ...makeComment("c_removed"),
+      start_index: 0,
+      end_index: 3,
+      anchor_content: "old",
+      side: "before" as const,
+    };
+    useCommentsMock.mockReturnValue(makeCommentsQuery([removed]));
+    renderViewer({ open: true, path: "file1.py", initialSearch: "comment=c_removed" });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("diff-viewer").getAttribute("data-layout")).toBe("split"),
+    );
+    expect(screen.getByTestId("comments-panel").getAttribute("data-active-comment-id")).toBe(
+      "c_removed",
+    );
+  });
+});
+
 describe("classifyAndRemapComments", () => {
+  it("re-anchors a comment on removed lines against the diff's before side", () => {
+    const before = "keep\nold check()\n";
+    const removed = makeAnchoredComment({
+      id: "c_removed",
+      side: "before",
+      start_index: 0,
+      end_index: 9,
+      start_line: 1,
+      end_line: 1,
+      anchor_content: "old check",
+    });
+    const current = makeAnchoredComment({
+      id: "c_current",
+      start_index: 0,
+      end_index: 4,
+      anchor_content: "keep",
+    });
+
+    const remapped = classifyAndRemapComments([removed, current], "keep\n", before);
+    expect(remapped.open.map((c) => [c.id, c.start_index, c.start_line, !!c.outdated])).toEqual([
+      ["c_removed", 5, 2, false],
+      ["c_current", 0, undefined, false],
+    ]);
+
+    // Diff not loaded yet: kept as stored, not judged against the current file.
+    expect(classifyAndRemapComments([removed], "keep\n").open[0]).toBe(removed);
+    // A new file has no before side for it to live on.
+    expect(classifyAndRemapComments([removed], "keep\n", null).open[0].outdated).toBe(true);
+  });
+
   it("buckets addressed comments separately and never remaps them", () => {
     const fileContent = "AAAA\nhello world\n";
     const addressed = makeAnchoredComment({
