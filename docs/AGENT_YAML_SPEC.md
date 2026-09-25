@@ -585,6 +585,11 @@ The setup runs on the host before the session starts. The worktree create has
 to answer within the server's timeout, so keep it short. When setup fails or
 times out, the worktree and its new branch are removed again and the create
 reports the command's output.
+A sub-agent that declares `worktree: true` is not dispatched when the
+worktree cannot be prepared because this file is invalid or `setup` fails: the
+orchestrator gets the error instead of a worker running unisolated in its
+checkout. Other create failures (an offline host, for example) still fall back
+to the shared checkout.
 
 For long cold installs, use `setup_async`. It starts in the background once the
 worktree exists (after `setup`), so the create returns at once:

@@ -148,6 +148,20 @@ def load_worktree_setup(*roots: Path) -> WorktreeSetup | None:
     )
 
 
+def is_worktree_config_error(message: str) -> bool:
+    """
+    Report whether a worktree create failed on the repository's own setup.
+
+    Every config error names :data:`CONFIG_PATH` and every ``setup`` failure
+    starts with ``worktree setup``. Retrying the dispatch without a worktree
+    does not fix those; it would only run the task in the shared checkout.
+
+    :param message: The create's error message, possibly wrapped by the server.
+    :returns: ``True`` for a bad ``worktree.yaml`` or a failing ``setup``.
+    """
+    return str(CONFIG_PATH) in message or "worktree setup " in message
+
+
 def _positive_seconds(raw: dict[str, object], key: str, default: float) -> float:
     """
     Validate an optional duration field.
