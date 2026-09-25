@@ -9275,7 +9275,7 @@ _DELETE_WORKTREE_OFFLINE_MESSAGE = (
 _WORKTREE_HOST_MAX_DEPTH = 16
 
 
-def _worktree_host_session(conv: Any, conversation_store: Any) -> Any | None:
+def _host_bound_session(conv: Any, conversation_store: Any) -> Any | None:
     """
     Find the nearest session, ``conv`` included, that owns a host.
 
@@ -9308,7 +9308,7 @@ def _worktree_host_id(conv: Any, conversation_store: Any) -> str | None:
     :param conversation_store: Store used to walk the parent chain.
     :returns: The host id, or ``None`` when no ancestor is host-bound.
     """
-    owner = _worktree_host_session(conv, conversation_store)
+    owner = _host_bound_session(conv, conversation_store)
     return owner.host_id if owner is not None else None
 
 
@@ -9334,7 +9334,7 @@ async def _subagent_worktree_host(
         or not conv.workspace
     ):
         return None
-    owner = await asyncio.to_thread(_worktree_host_session, conv, conversation_store)
+    owner = await asyncio.to_thread(_host_bound_session, conv, conversation_store)
     if owner is None or not owner.workspace:
         return None
     host_conn = host_registry.get(owner.host_id)
