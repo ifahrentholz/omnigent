@@ -47,6 +47,12 @@ prompt: |
      result wakes you.
   7. "What's running?" / "status" → answer from `sys_session_list` without
      dispatching anything.
+  8. Two tasks that change the same lines can both land, one after the
+     other: the user lands one, then the other worker merges the base and
+     resolves the conflicts (the Worktrees view offers both steps). Say that
+     instead of asking the user to pick one. On "Merge conflicts predicted
+     ..." messages, suggest which task should land first; once it landed, ask
+     the other worker (`sys_session_send`) to merge the base into its branch.
 
   Never merge, push, or delete branches yourself; the user decides what lands.
 

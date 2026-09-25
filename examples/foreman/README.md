@@ -16,12 +16,21 @@ foreman: login-empty-password done — branch omni/login-empty-password-3f9a1c, 
 
 ## Run it
 
-Start foreman in a git repository on a connected host, from the web UI
-(New session → pick the repo as workspace) or the CLI:
+Run the CLI from inside the git repository foreman should work on:
 
 ```bash
-omnigent run examples/foreman
+omnigent run path/to/examples/foreman
 ```
+
+To start it from the web UI instead, register foreman as a built-in agent
+when the server starts, then pick **foreman** under New chat with the
+repository as workspace:
+
+```bash
+OMNIGENT_BUILTIN_AGENT_DIRS="$PWD/examples/foreman" omnigent server
+```
+
+In a dev checkout, prefix `just dev` the same way.
 
 Workers are Claude Code (`claude-native`, the default) and Codex
 (`codex-native`, ask for it: "…with codex"). Both CLIs must be installed on the
@@ -66,8 +75,18 @@ Each worktree also gets its own port range for dev servers (`$PORT`,
 Tasks that change the same files get a badge in the Worktrees view. A
 `git merge-tree` dry-run tells a clean overlap ("2 shared") from a real
 conflict ("conflict", or "conflicts with main" once another task landed). It
-covers committed work only. Expand the task to see the conflicting files and
-**Tell orchestrator**, which asks foreman to sequence the tasks.
+covers committed work only. Expand the task to see the conflicting files.
+
+Two conflicting tasks can still both land, one after the other:
+
+- **Land…** one of them. The confirmation offers "Then ask *<other task>* to
+  update from main" (on by default), which asks each conflicting worker to
+  merge `main` into its branch and resolve the conflicts.
+- A task that already conflicts with its base shows **Resolve…**. Add an
+  optional note ("keep both", "main wins") and the worker merges the base,
+  resolves the conflicts, reruns the tests and commits. It asks back when the
+  two changes contradict each other and the note does not settle it.
+- **Tell orchestrator** asks foreman which task should land first.
 
 foreman never merges on its own. In the Worktrees view, expand a task and
 choose one of:
