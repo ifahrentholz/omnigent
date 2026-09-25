@@ -1,7 +1,8 @@
 // Shared comment-interaction layer for any Monaco code editor surface.
 //
 // Used by both MonacoCodeEditor (the file editor's modified buffer) and
-// MonacoDiffViewer (the diff's modified side). Given an editor instance, it:
+// MonacoDiffViewer (one layer per diff side: modified = "after", original =
+// "before" for comments on removed lines). Given an editor instance, it:
 //   • renders existing comments as inline decorations (+ the active one stronger),
 //   • shows a floating "Add comment" button on a non-empty selection,
 //   • navigates to a comment when its highlight is clicked,
@@ -11,11 +12,11 @@
 // getPositionAt bridge those to editor positions. The hook returns the floating
 // button as a portal node for the caller to render.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AtSignIcon, MessageSquarePlusIcon } from "lucide-react";
 import type { OnMount } from "@monaco-editor/react";
-import type { Comment } from "@/hooks/useComments";
+import { type Comment, type CommentSide, sideOf } from "@/hooks/useComments";
 import type { ActiveSelection } from "./codeViewerHelpers";
 import { getEmbedRoot } from "@/lib/host";
 import { useChatStore } from "@/store/chatStore";
@@ -106,6 +107,12 @@ interface UseMonacoCommentLayerOptions {
    * comment" that tags the selected line span into the chat composer.
    */
   path?: string;
+  /**
+   * Diff side this editor shows. The layer shows only that side's comments
+   * (offsets index different texts per side) and tags new selections with it.
+   * Unset for a plain editor, which shows the "after" side.
+   */
+  side?: CommentSide;
 }
 
 /**
@@ -117,13 +124,21 @@ interface UseMonacoCommentLayerOptions {
 export function useMonacoCommentLayer({
   editorRef,
   mounted,
-  comments,
-  activeSelection,
+  comments: allComments,
+  activeSelection: anySelection,
   onSetActiveSelection,
   canComment,
   pendingBodyRef,
   path,
+  side,
 }: UseMonacoCommentLayerOptions): React.ReactNode {
+  const layerSide = side ?? "after";
+  const comments = useMemo(
+    () => allComments.filter((c) => sideOf(c) === layerSide),
+    [allComments, layerSide],
+  );
+  const activeSelection =
+    anySelection !== null && sideOf(anySelection) === layerSide ? anySelection : null;
   const sessionHarness = useChatStore((s) => s.sessionHarness);
   const canAttachToAgent = !!path && nativeCodingAgentForHarness(sessionHarness) !== undefined;
   const decorationsRef = useRef<DecorationsCollection | null>(null);
@@ -141,6 +156,8 @@ export function useMonacoCommentLayer({
   canCommentRef.current = canComment;
   const pendingBodyRefRef = useRef(pendingBodyRef);
   pendingBodyRefRef.current = pendingBodyRef;
+  const sideRef = useRef(side);
+  sideRef.current = side;
 
   // Recompute comment + active-selection decorations from current offsets.
   const applyDecorations = useCallback(() => {
@@ -210,6 +227,7 @@ export function useMonacoCommentLayer({
               start_index: clicked.start_index,
               end_index: clicked.end_index,
               anchor_content: clicked.anchor_content ?? "",
+              ...(sideRef.current ? { side: sideRef.current } : {}),
             });
             return;
           }
@@ -279,6 +297,7 @@ export function useMonacoCommentLayer({
       start_index: model.getOffsetAt(sel.getStartPosition()),
       end_index: model.getOffsetAt(sel.getEndPosition()),
       anchor_content: model.getValueInRange(sel),
+      ...(sideRef.current ? { side: sideRef.current } : {}),
     });
     setButtonPos(null);
   }, [editorRef]);

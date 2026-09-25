@@ -5,9 +5,17 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useResizableCommentsPanel } from "@/hooks/useResizableCommentsPanel";
 import { getCurrentAuthorId } from "@/lib/identity";
 import { cn } from "@/lib/utils";
-import type { Comment } from "@/hooks/useComments";
+import { type Comment, sideOf } from "@/hooks/useComments";
 import type { ActiveSelection } from "./codeViewerHelpers";
 import { displayAnchorContent } from "./pdfCommentHelpers";
+
+/** "L12", "L12–14", plus "removed" for a comment on the diff's before side. */
+export function commentLocation(c: Comment): string {
+  const end = c.end_line ?? c.start_line;
+  const lines =
+    end != null && end !== c.start_line ? `L${c.start_line}–${end}` : `L${c.start_line}`;
+  return sideOf(c) === "before" ? `${lines} · removed` : lines;
+}
 
 function avatarStyle(name: string): { backgroundColor: string; color: string } {
   let hash = 0;
@@ -112,6 +120,12 @@ export function CommentsPanel({
   const activeSelectionStart = activeSelection?.start_index;
   const activeSelectionEnd = activeSelection?.end_index;
   const activeCommentId = activeSelection?.comment_id;
+  const activeSide = activeSelection ? sideOf(activeSelection) : undefined;
+  // Offsets index different texts per diff side, so a range matches only on its side.
+  const atActiveRange = (c: Comment): boolean =>
+    c.start_index === activeSelectionStart &&
+    c.end_index === activeSelectionEnd &&
+    sideOf(c) === activeSide;
 
   useEffect(() => {
     setBody("");
@@ -124,13 +138,16 @@ export function CommentsPanel({
     if (activeSelectionStart == null || activeSelectionEnd == null) return;
     if (activeCommentId) return;
     const isExisting = comments.some(
-      (c) => c.start_index === activeSelectionStart && c.end_index === activeSelectionEnd,
+      (c) =>
+        c.start_index === activeSelectionStart &&
+        c.end_index === activeSelectionEnd &&
+        sideOf(c) === activeSide,
     );
     if (isExisting) return undefined;
     // rAF ensures the textarea has been rendered before we try to focus it.
     const id = requestAnimationFrame(() => addCommentTextareaRef.current?.focus());
     return () => cancelAnimationFrame(id);
-  }, [activeSelectionStart, activeSelectionEnd, activeCommentId, comments]);
+  }, [activeSelectionStart, activeSelectionEnd, activeSide, activeCommentId, comments]);
 
   // activeSelection is FileViewer state and keeps its identity across query
   // refreshes; this guard lets a later manual tab switch stick.
@@ -164,9 +181,7 @@ export function CommentsPanel({
   const isSelectedComment = (comment: Comment): boolean =>
     activeCommentId
       ? activeCommentId === comment.id
-      : comment.status === "draft" &&
-        activeSelectionStart === comment.start_index &&
-        activeSelectionEnd === comment.end_index;
+      : comment.status === "draft" && atActiveRange(comment);
 
   return (
     <div
@@ -253,11 +268,7 @@ export function CommentsPanel({
         {tab === "open" &&
           activeSelection != null &&
           activeCommentId == null &&
-          !comments.some(
-            (c) =>
-              c.start_index === activeSelection.start_index &&
-              c.end_index === activeSelection.end_index,
-          ) &&
+          !comments.some(atActiveRange) &&
           (canEdit ? (
             <div className="space-y-2 border-b border-border px-3 py-2">
               {activeSelection.anchor_content && (
@@ -449,8 +460,17 @@ function CommentCard({
     >
       {/* Anchor */}
       {c.anchor_content && (
-        <p className="truncate font-mono text-sm text-muted-foreground">
-          {displayAnchorContent(c.anchor_content)}
+        <p className="flex min-w-0 items-baseline gap-1.5 font-mono text-sm text-muted-foreground">
+          {c.start_line != null && (
+            <span
+              data-testid="comment-location"
+              className="shrink-0 text-[11px] tabular-nums"
+              title={sideOf(c) === "before" ? "On lines this change removed" : undefined}
+            >
+              {commentLocation(c)}
+            </span>
+          )}
+          <span className="truncate">{displayAnchorContent(c.anchor_content)}</span>
         </p>
       )}
 

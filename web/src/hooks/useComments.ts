@@ -12,6 +12,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { useChatStore } from "@/store/chatStore";
 
+/** Side of a diff a comment anchors to: "before" = removed lines. */
+export type CommentSide = "before" | "after";
+
+/** The diff side a comment or selection belongs to; unset means "after". */
+export function sideOf(item: { side?: CommentSide | null }): CommentSide {
+  return item.side ?? "after";
+}
+
 export interface Comment {
   id: string;
   conversation_id: string;
@@ -36,7 +44,7 @@ export interface Comment {
   /** 1-based last line of the anchor (inclusive). */
   end_line?: number | null;
   /** Diff side: "after" (current file) or "before" (a removed line). */
-  side?: "before" | "after" | null;
+  side?: CommentSide | null;
   /**
    * Client-side only: the anchor text is no longer in the current file, so
    * the stored range no longer points at what was commented on.
@@ -114,7 +122,7 @@ export function useAddComment(sessionId: string) {
       anchor_content?: string | null;
       start_line?: number;
       end_line?: number;
-      side?: "before" | "after";
+      side?: CommentSide;
     }) => {
       const res = await authenticatedFetch(
         `/v1/sessions/${encodeURIComponent(sessionId)}/comments`,

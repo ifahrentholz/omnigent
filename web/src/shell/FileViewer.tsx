@@ -86,6 +86,7 @@ import {
   useAddComment,
   useComments,
   lineRange,
+  sideOf,
   useDeleteComment,
   useUpdateComment,
 } from "@/hooks/useComments";
@@ -161,10 +162,15 @@ function findReflowedAnchor(
  *   gone, the comment is kept at its stored offsets with `outdated: true`, so
  *   it is shown as outdated instead of silently highlighting other text.
  * - **addressed**: handled by the agent or user (status "addressed").
+ *
+ * Comments on removed lines (`side: "before"`) re-anchor to the diff's
+ * `before` content instead: kept as stored until it is loaded, outdated when
+ * the file has no `before` (it is new).
  */
 export function classifyAndRemapComments(
   comments: Comment[],
   fileContent: string,
+  beforeContent?: string | null,
 ): { open: Comment[]; addressed: Comment[] } {
   const open: Comment[] = [];
   const addressed: Comment[] = [];
@@ -174,9 +180,15 @@ export function classifyAndRemapComments(
       addressed.push(c);
       continue;
     }
-    // Draft with no anchor, a PDF anchor (geometry, not text), or a file not
+    const onRemovedLines = sideOf(c) === "before";
+    if (onRemovedLines && beforeContent === null) {
+      open.push({ ...c, outdated: true });
+      continue;
+    }
+    const content = onRemovedLines ? beforeContent : fileContent;
+    // Draft with no anchor, a PDF anchor (geometry, not text), or content not
     // loaded yet — keep at stored offsets.
-    if (!c.anchor_content || isPdfAnchor(c.anchor_content) || !fileContent) {
+    if (!c.anchor_content || isPdfAnchor(c.anchor_content) || !content) {
       open.push(c);
       continue;
     }
@@ -185,18 +197,16 @@ export function classifyAndRemapComments(
     const SEARCH_WINDOW = 200;
     const windowStart = Math.max(0, c.start_index - SEARCH_WINDOW);
     const windowEnd = Math.min(
-      fileContent.length,
+      content.length,
       c.start_index + c.anchor_content.length + SEARCH_WINDOW,
     );
-    const nearbyIdx = fileContent.indexOf(c.anchor_content, windowStart);
+    const nearbyIdx = content.indexOf(c.anchor_content, windowStart);
     const idx =
-      nearbyIdx !== -1 && nearbyIdx <= windowEnd
-        ? nearbyIdx
-        : fileContent.indexOf(c.anchor_content);
+      nearbyIdx !== -1 && nearbyIdx <= windowEnd ? nearbyIdx : content.indexOf(c.anchor_content);
     const found =
       idx !== -1
         ? { start: idx, end: idx + c.anchor_content.length }
-        : findReflowedAnchor(fileContent, c.anchor_content, c.start_index);
+        : findReflowedAnchor(content, c.anchor_content, c.start_index);
     if (found === null) {
       open.push({ ...c, outdated: true });
       continue;
@@ -209,7 +219,7 @@ export function classifyAndRemapComments(
       ...c,
       start_index: found.start,
       end_index: found.end,
-      ...(c.start_line != null ? lineRange(fileContent, found.start, found.end) : {}),
+      ...(c.start_line != null ? lineRange(content, found.start, found.end) : {}),
     });
   }
 
@@ -606,15 +616,37 @@ function FileViewerBody({
 
   const allComments = useMemo(() => commentsQuery.data ?? [], [commentsQuery.data]);
   const fileContent = useMemo(() => fileQuery.data?.content ?? "", [fileQuery.data]);
+  // Undefined until the diff loads; null when the file is new.
+  const beforeContent = diffQuery.data?.before;
   const { open: openComments, addressed: addressedComments } = useMemo(
-    () => classifyAndRemapComments(allComments, fileContent),
-    [allComments, fileContent],
+    () => classifyAndRemapComments(allComments, fileContent, beforeContent),
+    [allComments, fileContent, beforeContent],
   );
   // Outdated comments have no text left to highlight; they stay listed only.
   const anchoredComments = useMemo(
     () => openComments.filter((comment) => !comment.outdated),
     [openComments],
   );
+  // Comments on removed lines exist only in the diff's original pane.
+  const currentFileComments = useMemo(
+    () => anchoredComments.filter((comment) => sideOf(comment) === "after"),
+    [anchoredComments],
+  );
+
+  /** Select a saved comment, opening the split diff for one on removed lines. */
+  const selectComment = (comment: Comment) => {
+    if (sideOf(comment) === "before") {
+      setDiffActive(true);
+      setDiffLayout("split");
+    }
+    handleSetActiveSelection({
+      start_index: comment.start_index,
+      end_index: comment.end_index,
+      anchor_content: comment.anchor_content ?? "",
+      comment_id: comment.id,
+      ...(comment.side ? { side: comment.side } : {}),
+    });
+  };
 
   const handleSetActiveSelection = (selection: ActiveSelection | null) => {
     // Comment navigation supersedes a citation, including clicks outside the editor.
@@ -622,7 +654,10 @@ function FileViewerBody({
     let nextSelection = selection;
     if (selection && selection.comment_id == null) {
       const comment = openComments.find(
-        (c) => c.start_index === selection.start_index && c.end_index === selection.end_index,
+        (c) =>
+          c.start_index === selection.start_index &&
+          c.end_index === selection.end_index &&
+          sideOf(c) === sideOf(selection),
       );
       if (comment) nextSelection = { ...selection, comment_id: comment.id };
     }
@@ -647,12 +682,7 @@ function FileViewerBody({
     setCommentsOpen(true);
     // An outdated comment has no range left to select; the panel lists it.
     if (comment.outdated) return;
-    handleSetActiveSelection({
-      start_index: comment.start_index,
-      end_index: comment.end_index,
-      anchor_content: comment.anchor_content ?? "",
-      comment_id: comment.id,
-    });
+    selectComment(comment);
   }, [openComments]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Find-in-file state lifted here so the toolbar button can open it.
@@ -1703,7 +1733,7 @@ function FileViewerBody({
               fileQuery={fileQuery}
               onDirtyChange={handleDirtyChange}
               onSaveStatusChange={setSaveStatus}
-              comments={anchoredComments}
+              comments={currentFileComments}
               addressedComments={addressedComments}
               activeSelection={activeSelection}
               onSetActiveSelection={handleSetActiveSelection}
@@ -1728,14 +1758,18 @@ function FileViewerBody({
             onCopyCommentLink={copyCommentLink}
             onAddComment={(body) => {
               if (activeSelection == null) return;
-              // Offsets index into the current file (the diff's "after" side);
-              // line numbers let the agent find the spot as `path:L12`.
+              // Offsets index into the current file (the diff's "after" side), or
+              // into the diff's "before" side for removed lines; line numbers let
+              // the agent find the spot as `path:L12`.
+              const side = viewMode === "diff" ? sideOf(activeSelection) : null;
               const anchorText =
                 isPdf || isImage || isBinary
                   ? null
-                  : viewMode === "diff"
-                    ? diffQuery.data?.after
-                    : fileQuery.data?.content;
+                  : side === "before"
+                    ? diffQuery.data?.before
+                    : side === "after"
+                      ? diffQuery.data?.after
+                      : fileQuery.data?.content;
               addComment.mutate(
                 {
                   path,
@@ -1746,7 +1780,7 @@ function FileViewerBody({
                   ...(typeof anchorText === "string"
                     ? lineRange(anchorText, activeSelection.start_index, activeSelection.end_index)
                     : {}),
-                  ...(viewMode === "diff" ? { side: "after" as const } : {}),
+                  ...(side ? { side } : {}),
                 },
                 { onSuccess: () => setActiveSelection(null) },
               );
@@ -1768,12 +1802,7 @@ function FileViewerBody({
             }
             onClickComment={(comment) => {
               if (comment.outdated) return;
-              handleSetActiveSelection({
-                start_index: comment.start_index,
-                end_index: comment.end_index,
-                anchor_content: comment.anchor_content ?? "",
-                comment_id: comment.id,
-              });
+              selectComment(comment);
               // Sync the selected comment into the URL so the address bar is
               // always shareable. AppShell clears this param when the viewer closes.
               setSearchParams(
@@ -1795,7 +1824,8 @@ function FileViewerBody({
                 (activeSelection?.comment_id === deleted.id ||
                   (activeSelection?.comment_id == null &&
                     activeSelection?.start_index === deleted.start_index &&
-                    activeSelection?.end_index === deleted.end_index))
+                    activeSelection?.end_index === deleted.end_index &&
+                    sideOf(activeSelection) === sideOf(deleted)))
               )
                 setActiveSelection(null);
             }}
