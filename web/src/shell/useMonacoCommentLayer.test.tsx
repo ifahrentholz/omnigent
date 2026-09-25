@@ -113,6 +113,7 @@ interface HookProps {
   canComment?: boolean;
   pendingBodyRef?: React.RefObject<string>;
   mounted?: boolean;
+  side?: "before" | "after";
 }
 
 // Host component: calls the hook and renders its returned ReactNode (the
@@ -127,6 +128,7 @@ function Host(props: HookProps & { editorRef: React.RefObject<CodeEditorInstance
     onSetActiveSelection: props.onSetActiveSelection ?? (() => {}),
     canComment: props.canComment ?? true,
     pendingBodyRef: props.pendingBodyRef,
+    side: props.side,
   }) as React.ReactElement | null;
 }
 
@@ -337,5 +339,58 @@ describe("useMonacoCommentLayer — reveal active selection", () => {
       endLineNumber: 2,
       endColumn: 4,
     });
+  });
+});
+
+describe("useMonacoCommentLayer — diff sides", () => {
+  const before = mkComment({ id: "b", start_index: 1, end_index: 3, side: "before" });
+  const after = mkComment({ id: "a", start_index: 4, end_index: 6, side: "after" });
+  const legacy = mkComment({ id: "l", start_index: 7, end_index: 8 });
+
+  it("highlights only its own side's comments", () => {
+    // WHY: before/after offsets index different texts, so a layer must never
+    // paint the other side's ranges.
+    const fake = makeFakeEditor(CONTENT);
+    renderLayer(fake, { comments: [before, after, legacy], side: "before" });
+    const decorations = vi.mocked(fake.editor.createDecorationsCollection).mock.calls[0][0] ?? [];
+    expect(decorations).toHaveLength(1);
+
+    const plain = makeFakeEditor(CONTENT);
+    renderLayer(plain, { comments: [before, after, legacy] });
+    const current = vi.mocked(plain.editor.createDecorationsCollection).mock.calls[0][0] ?? [];
+    expect(current).toHaveLength(2);
+  });
+
+  it("tags new selections and clicked comments with the layer's side", () => {
+    const fake = makeFakeEditor(CONTENT);
+    fake.setSelection(1, 3);
+    const onSet = vi.fn();
+    renderLayer(fake, { comments: [before], side: "before", onSetActiveSelection: onSet });
+    act(() => fake.fire("selection"));
+    const btn = document.querySelector("[data-add-comment-btn]") as HTMLElement;
+    act(() => {
+      btn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    });
+    expect(onSet).toHaveBeenLastCalledWith({
+      start_index: 1,
+      end_index: 3,
+      anchor_content: "selected",
+      side: "before",
+    });
+
+    fake.clearSelection();
+    act(() => fake.fire("mouseup", { target: { position: { offset: 2 } } }));
+    expect(onSet).toHaveBeenLastCalledWith(
+      expect.objectContaining({ start_index: 1, end_index: 3, side: "before" }),
+    );
+  });
+
+  it("ignores an active selection from the other side", () => {
+    const fake = makeFakeEditor(CONTENT);
+    renderLayer(fake, {
+      activeSelection: { start_index: 1, end_index: 3, anchor_content: "bc", side: "after" },
+      side: "before",
+    });
+    expect(fake.editor.revealRangeInCenterIfOutsideViewport).not.toHaveBeenCalled();
   });
 });

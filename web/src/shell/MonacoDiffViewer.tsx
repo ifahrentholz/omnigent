@@ -136,6 +136,7 @@ export function MonacoDiffViewer({
 
   // The modified-side code editor, obtained from the diff editor on mount.
   const modifiedEditorRef = useRef<CodeEditorInstance | null>(null);
+  const originalEditorRef = useRef<CodeEditorInstance | null>(null);
   // The diff editor itself — its updateOptions propagates the code font to both
   // panes (per-pane updateOptions would only re-font one side).
   const diffEditorRef = useRef<Parameters<DiffOnMount>[0] | null>(null);
@@ -166,18 +167,19 @@ export function MonacoDiffViewer({
       diffEditorRef.current = diffEditor;
       const modified = diffEditor.getModifiedEditor();
       modifiedEditorRef.current = modified;
+      const original = diffEditor.getOriginalEditor();
+      originalEditorRef.current = original ?? null;
       // Capture both models so the teardown effect can dispose them itself.
-      originalModelRef.current = diffEditor.getOriginalEditor()?.getModel() ?? null;
+      originalModelRef.current = original?.getModel() ?? null;
       modifiedModelRef.current = modified.getModel();
-      // Align the modified model's offsets with the raw "after" char offsets that
-      // comment anchors use (CRLF files would otherwise be counted as LF).
-      modified
-        .getModel()
-        ?.setEOL(
-          (after ?? "").includes("\r\n")
-            ? monaco.editor.EndOfLineSequence.CRLF
-            : monaco.editor.EndOfLineSequence.LF,
-        );
+      // Align each model's offsets with the raw char offsets that comment
+      // anchors use (CRLF files would otherwise be counted as LF).
+      const eolOf = (text: string | null) =>
+        (text ?? "").includes("\r\n")
+          ? monaco.editor.EndOfLineSequence.CRLF
+          : monaco.editor.EndOfLineSequence.LF;
+      modified.getModel()?.setEOL(eolOf(after));
+      originalModelRef.current?.setEOL(eolOf(before));
       // Restore the reader's place in the diff and cache further scrolling under
       // the diff's own key.
       cancelScrollRestoreRef.current = attachEditorScrollRestore(
@@ -188,7 +190,7 @@ export function MonacoDiffViewer({
       );
       setMounted(true);
     },
-    [after],
+    [after, before],
   );
 
   useEffect(
@@ -215,6 +217,7 @@ export function MonacoDiffViewer({
         // Already disposed.
       }
       modifiedEditorRef.current = null;
+      originalEditorRef.current = null;
       diffEditorRef.current = null;
       originalModelRef.current = null;
       modifiedModelRef.current = null;
@@ -267,7 +270,7 @@ export function MonacoDiffViewer({
     });
   }, []);
 
-  // Comments anchor into the current ("after") content == the saved file, so
+  // "after" comments anchor into the current content == the saved file, so
   // they're always offset-valid here; gate only on edit permission.
   const commentButton = useMonacoCommentLayer({
     editorRef: modifiedEditorRef,
@@ -278,6 +281,19 @@ export function MonacoDiffViewer({
     canComment: canEdit,
     pendingBodyRef,
     path,
+    side: "after",
+  });
+  // Removed lines are selectable only in the split layout's original pane;
+  // unified renders them as non-selectable zones in the modified editor.
+  const beforeCommentButton = useMonacoCommentLayer({
+    editorRef: originalEditorRef,
+    mounted,
+    comments,
+    activeSelection,
+    onSetActiveSelection,
+    canComment: canEdit && layout === "split" && before !== null,
+    pendingBodyRef,
+    side: "before",
   });
 
   const options = useMemo<DiffEditorProps["options"]>(() => {
@@ -344,6 +360,7 @@ export function MonacoDiffViewer({
         )}
       </div>
       {commentButton}
+      {beforeCommentButton}
     </div>
   );
 }

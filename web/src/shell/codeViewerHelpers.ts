@@ -3,6 +3,7 @@
 
 import type { BundledLanguage } from "shiki";
 import type { ResolvedThemeMode } from "@/components/theme/themeMode";
+import type { CommentSide } from "@/hooks/useComments";
 
 // ---------------------------------------------------------------------------
 // Shared selection type
@@ -21,6 +22,8 @@ export interface ActiveSelection {
   anchor_content: string;
   /** Present when the selection activates a saved comment rather than a new draft. */
   comment_id?: string;
+  /** Diff side the offsets index; unset means "after" (the current file). */
+  side?: CommentSide;
 }
 
 /**
