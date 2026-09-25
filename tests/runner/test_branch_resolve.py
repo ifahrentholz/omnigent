@@ -152,6 +152,8 @@ def test_binary_conflicts_offer_whole_file_choices(tmp_path: Path) -> None:
     repo = tmp_path / "bin"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "config", "user.email", "t@example.com")
     (repo / "logo.png").write_bytes(b"\x89PNG\0base")
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "init")
