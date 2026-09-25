@@ -151,3 +151,30 @@ export function useRequestUpdateFromBase() {
       ).then(() => undefined),
   });
 }
+
+/**
+ * Message telling a worker its conflicts were resolved by hand.
+ *
+ * @param base - The base branch that was merged in, e.g. "main".
+ * @param commit - The merge commit.
+ * @param files - Files the merge touched.
+ */
+export function manualResolutionNotice(base: string, commit: string, files: string[]): string {
+  const touched = files.length > 0 ? `; files: ${files.join(", ")}` : "";
+  return [
+    `I merged \`${base}\` into your branch and resolved the conflicts by hand ` +
+      `(commit ${commit.slice(0, 7)}${touched}).`,
+    "Keep that resolution: build on top of it, and rerun the relevant tests before you continue.",
+  ].join("\n");
+}
+
+/**
+ * Post a message to a worker session.
+ *
+ * @param sessionId - The worktree sub-agent session.
+ */
+export function useMessageWorker(sessionId: string) {
+  return useMutation({
+    mutationFn: (text: string) => postUserMessage(sessionId, text),
+  });
+}

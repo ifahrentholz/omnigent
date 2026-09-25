@@ -88,6 +88,11 @@ Two conflicting tasks can still both land, one after the other:
   optional note ("keep both", "main wins") and the worker merges the base,
   resolves the conflicts, reruns the tests and commits. It asks back when the
   two changes contradict each other and the note does not settle it.
+- **Resolve manually…** resolves the conflicts yourself, while the worker is
+  idle: it merges the base into the task branch in the worker's worktree and
+  shows each conflict with the task's and the base's lines side by side.
+  Keep one side, both, or edit the result, then **Complete merge** commits it
+  (and, by default, tells the worker). **Abort merge** restores the worktree.
 - **Tell orchestrator** asks foreman which task should land first.
 
 foreman never merges on its own. In the Worktrees view, expand a task and
