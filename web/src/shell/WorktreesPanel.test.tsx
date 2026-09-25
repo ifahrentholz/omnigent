@@ -12,9 +12,11 @@ import type * as BranchDiffModule from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import {
   LandError,
+  updateFromBaseRequest,
   useLandBranch,
   useNotifyOrchestrator,
   useRequestPullRequest,
+  useRequestUpdateFromBase,
 } from "@/hooks/useLandBranch";
 import type * as LandBranchModule from "@/hooks/useLandBranch";
 import { WorktreesPanel, conflictNotice, taskStage } from "./WorktreesPanel";
@@ -31,6 +33,7 @@ vi.mock("@/hooks/useLandBranch", async (importOriginal) => ({
   useLandBranch: vi.fn(),
   useRequestPullRequest: vi.fn(),
   useNotifyOrchestrator: vi.fn(),
+  useRequestUpdateFromBase: vi.fn(),
 }));
 
 function mutation(overrides: Record<string, unknown> = {}) {
@@ -62,6 +65,9 @@ beforeEach(() => {
   );
   vi.mocked(useNotifyOrchestrator).mockReturnValue(
     mutation() as unknown as ReturnType<typeof useNotifyOrchestrator>,
+  );
+  vi.mocked(useRequestUpdateFromBase).mockReturnValue(
+    mutation() as unknown as ReturnType<typeof useRequestUpdateFromBase>,
   );
   vi.mocked(useBranchConflicts).mockReturnValue(verdicts(null));
 });
@@ -374,11 +380,145 @@ describe("conflict prediction", () => {
       { title: "login", branch: "omni/login-1", sessionId: "conv_a" },
       "main",
       [{ ref: "omni/billing-2", clean: false, files: ["src/shared.ts", "src/b.ts"] }],
-      [{ branch: "omni/billing-2", title: "billing" }],
+      [{ branch: "omni/billing-2", title: "billing", sessionId: "conv_b" }],
     );
     expect(text).toContain('task "login" (omni/login-1, session conv_a)');
     expect(text).toContain("- with billing (omni/billing-2): src/shared.ts, src/b.ts");
-    expect(text).toContain("rebase onto main");
+    expect(text).toContain("merge main into its branch");
+  });
+});
+
+describe("conflict resolution", () => {
+  function baseConflict() {
+    vi.mocked(useBranchChanges).mockReturnValue(
+      branchResult([{ path: "README.md", added: 1, removed: 1 }]),
+    );
+    vi.mocked(useBranchConflicts).mockReturnValue(
+      verdicts([{ ref: "main", clean: false, files: ["README.md"] }]),
+    );
+  }
+
+  function pairConflict() {
+    sharedFileChanges();
+    vi.mocked(useBranchConflicts).mockImplementation((id) =>
+      verdicts([
+        { ref: "main", clean: true, files: [] },
+        {
+          ref: id === "conv_a" ? "omni/billing-2" : "omni/login-1",
+          clean: false,
+          files: ["src/shared.ts"],
+        },
+      ]),
+    );
+  }
+
+  it("asks the worker to merge its base, with the reviewer's note", () => {
+    const resolve = mutation();
+    vi.mocked(useRequestUpdateFromBase).mockReturnValue(
+      resolve as unknown as ReturnType<typeof useRequestUpdateFromBase>,
+    );
+    baseConflict();
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[child({ id: "conv_wt", git_branch: "omni/login-a1b2c3" })]}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resolve…" }));
+    fireEvent.change(screen.getByLabelText("Note for the worker"), {
+      target: { value: "main wins" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Ask worker to resolve" }));
+
+    expect(resolve.mutate).toHaveBeenCalledWith(
+      [{ sessionId: "conv_wt", base: "main", files: ["README.md"], note: "main wins" }],
+      expect.anything(),
+    );
+  });
+
+  it("explains that one of two conflicting open tasks has to land first", () => {
+    pairConflict();
+    render(
+      <MemoryRouter>
+        <WorktreesPanel conversationId="conv_root" sessions={PAIR} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    expect(screen.getByText(/Land one of the conflicting tasks first/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Resolve…" })).toBeNull();
+  });
+
+  it("asks the conflicting tasks to update once this one landed", () => {
+    const land = mutation();
+    const updateOthers = mutation();
+    vi.mocked(useLandBranch).mockReturnValue(land as unknown as ReturnType<typeof useLandBranch>);
+    vi.mocked(useRequestUpdateFromBase).mockReturnValue(
+      updateOthers as unknown as ReturnType<typeof useRequestUpdateFromBase>,
+    );
+    pairConflict();
+    render(
+      <MemoryRouter>
+        <WorktreesPanel conversationId="conv_root" sessions={PAIR} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    fireEvent.click(screen.getByRole("button", { name: "Land…" }));
+    const followUp = screen.getByLabelText<HTMLInputElement>(
+      "Then ask billing to update from main",
+    );
+    expect(followUp.checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Land into main" }));
+
+    const [, options] = vi.mocked(land.mutate).mock.calls[0] as [
+      unknown,
+      { onSuccess: (result: { base: string }) => void },
+    ];
+    options.onSuccess({ base: "main" });
+    expect(updateOthers.mutate).toHaveBeenCalledWith([
+      { sessionId: "conv_b", base: "main", files: ["src/shared.ts"] },
+    ]);
+  });
+
+  it("lands without follow-ups when the user opts out", () => {
+    const land = mutation();
+    const updateOthers = mutation();
+    vi.mocked(useLandBranch).mockReturnValue(land as unknown as ReturnType<typeof useLandBranch>);
+    vi.mocked(useRequestUpdateFromBase).mockReturnValue(
+      updateOthers as unknown as ReturnType<typeof useRequestUpdateFromBase>,
+    );
+    pairConflict();
+    render(
+      <MemoryRouter>
+        <WorktreesPanel conversationId="conv_root" sessions={PAIR} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand login" }));
+    fireEvent.click(screen.getByRole("button", { name: "Land…" }));
+    fireEvent.click(screen.getByLabelText("Then ask billing to update from main"));
+    fireEvent.click(screen.getByRole("button", { name: "Land into main" }));
+
+    const [, options] = vi.mocked(land.mutate).mock.calls[0] as [
+      unknown,
+      { onSuccess: (result: { base: string }) => void },
+    ];
+    options.onSuccess({ base: "main" });
+    expect(updateOthers.mutate).not.toHaveBeenCalled();
+  });
+
+  it("words the update request around the base and the reviewer's note", () => {
+    const text = updateFromBaseRequest("main", ["README.md"], "  keep both headings ");
+    expect(text).toContain("`main` has changes that conflict with your branch in: README.md.");
+    expect(text).toContain("`git merge main`");
+    expect(text).toContain("git merge --abort");
+    expect(text).toContain("Reviewer's note: keep both headings");
+    expect(updateFromBaseRequest("main", [])).not.toContain("Reviewer's note");
   });
 });
 
