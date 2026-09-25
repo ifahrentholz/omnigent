@@ -512,3 +512,129 @@ def test_broken_worktree_config_fails_the_dispatch_instead_of_running_unisolated
         except subprocess.TimeoutExpired:
             daemon.proc.kill()
             daemon.proc.wait()
+
+
+def test_reviewer_resolves_a_base_conflict_by_hand(
+    live_server: str,
+    http_client: httpx.Client,
+    tmp_path: Path,
+    mock_llm_server_url: str,
+) -> None:
+    """
+    ``git/resolve`` merges the base into the worker's branch, takes the
+    reviewer's resolution and commits the merge; the base conflict clears.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    configure_mock_llm(
+        mock_llm_server_url,
+        [
+            {
+                "tool_calls": [
+                    {
+                        "call_id": "call_wt_resolve",
+                        "name": "sys_session_send",
+                        "arguments": json.dumps(
+                            {"agent": "worker", "title": "heading", "args": "change it"}
+                        ),
+                    }
+                ]
+            },
+            {"text": "Dispatched the worker."},
+            {"text": f"Worker reported {_MARKER}."},
+        ],
+        key=_PARENT_MODEL,
+    )
+    configure_mock_llm(mock_llm_server_url, [{"text": _MARKER}], key=_WORKER_MODEL)
+
+    daemon = _spawn_host_daemon(
+        tmp_path=tmp_path, live_server=live_server, mock_llm_server_url=mock_llm_server_url
+    )
+    try:
+        _wait_for_host_online(http_client, daemon.host_id, timeout=30.0)
+        agent_id = lookup_agent_id(
+            http_client, upload_agent(http_client, _write_orchestrator_yaml(tmp_path))
+        )
+        created = http_client.post(
+            "/v1/sessions",
+            json={"agent_id": agent_id, "host_id": daemon.host_id, "workspace": str(repo)},
+            timeout=60.0,
+        )
+        assert created.status_code == 201, created.text
+        session_id = created.json()["id"]
+        resp = http_client.post(
+            f"/v1/sessions/{session_id}/events",
+            json={
+                "type": "message",
+                "data": {"role": "user", "content": [{"type": "input_text", "text": "go"}]},
+            },
+            timeout=60.0,
+        )
+        assert resp.status_code in (200, 202), resp.text
+        child = _wait_for_child(http_client, session_id)
+        _wait_for_text(http_client, child["id"], _MARKER)
+        worktree = Path(child["workspace"])
+
+        def commit(cwd: Path, text: str, message: str) -> None:
+            (cwd / "README.md").write_text(text)
+            # The runner's file watcher briefly holds index.lock; retry like it does.
+            for _ in range(20):
+                result = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(cwd),
+                        "-c",
+                        "user.name=e2e",
+                        "-c",
+                        "user.email=e2e@example.com",
+                        "commit",
+                        "-q",
+                        "-am",
+                        message,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if "index.lock" not in result.stderr:
+                    break
+                time.sleep(0.2)
+            assert result.returncode == 0, result.stderr + result.stdout
+
+        commit(worktree, "hello from the task\n", "task")
+        commit(repo, "hello from main\n", "main moved on")
+        resolve_url = f"/v1/sessions/{child['id']}/resources/git/resolve"
+
+        state = http_client.post(resolve_url, json={"action": "status"}, timeout=60.0)
+        assert state.status_code == 200, state.text
+        assert state.json()["in_progress"] is False
+        started = http_client.post(resolve_url, json={"action": "start"}, timeout=60.0)
+        assert started.status_code == 200, started.text
+        [entry] = started.json()["conflicts"]
+        assert (entry["path"], entry["ours"], entry["theirs"]) == (
+            "README.md",
+            "hello from the task\n",
+            "hello from main\n",
+        )
+        refused = http_client.post(resolve_url, json={"action": "complete"}, timeout=60.0)
+        assert refused.status_code == 409, refused.text
+
+        http_client.post(
+            resolve_url,
+            json={"action": "resolve", "path": "README.md", "content": "hello from both\n"},
+            timeout=60.0,
+        ).raise_for_status()
+        done = http_client.post(resolve_url, json={"action": "complete"}, timeout=60.0)
+        assert done.status_code == 200, done.text
+        assert done.json()["base"] == "main"
+
+        assert (worktree / "README.md").read_text() == "hello from both\n"
+        verdicts = http_client.get(f"/v1/sessions/{child['id']}/resources/git/conflicts").json()
+        assert verdicts["results"][0] == {"ref": "main", "clean": True, "files": []}
+    finally:
+        daemon.proc.send_signal(signal.SIGTERM)
+        try:
+            daemon.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            daemon.proc.kill()
+            daemon.proc.wait()
