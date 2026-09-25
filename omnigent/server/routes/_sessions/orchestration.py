@@ -253,6 +253,7 @@ from omnigent.server.routes._sessions.helpers import (
     _forward_session_change_to_runner,
     _get_runner_client,
     _handle_advise_models_mcp,
+    _host_bound_session,
     _invalidate_runner_backed_snapshot_state,
     _is_codex_native_subagent,
     _is_kiro_native_session,
@@ -2894,6 +2895,56 @@ async def _heal_subagent_runner_binding_via_parent(
             return None
 
     return live_client
+
+
+async def _wake_subagent_host_runner(
+    child_conv: Conversation,
+    app_state: Any,
+    conversation_store: ConversationStore,
+    runner_router: RunnerRouter | None,
+) -> httpx.AsyncClient | None:
+    """
+    Relaunch the runner a sub-agent shares with its host-bound ancestor.
+
+    A child never owns a host, so once that shared runner is gone (idle
+    timeout, host restart) only the ancestor can relaunch it. Wakes the
+    ancestor's runner, initializes the ancestor's session on it, then heals
+    the child's binding to it.
+
+    :param child_conv: The sub-agent child whose runner is unreachable.
+    :param app_state: ``request.app.state`` with the host/tunnel registries.
+    :param conversation_store: Store used to walk ancestors and heal the child.
+    :param runner_router: Router used to resolve runner clients, or ``None``.
+    :returns: The live runner client after healing, or ``None`` when no
+        host-bound ancestor could be woken.
+    """
+    owner = await asyncio.to_thread(_host_bound_session, child_conv, conversation_store)
+    if owner is None or owner.id == child_conv.id:
+        return None
+    owner_client, owner = await ensure_runner_connected(
+        session_id=owner.id,
+        conv=owner,
+        app_state=app_state,
+        conversation_store=conversation_store,
+        runner_router=runner_router,
+    )
+    if owner_client is None:
+        return None
+    # The orchestrator has no new input, so its session must come back idle.
+    await _ensure_runner_session_initialized(
+        owner.id,
+        owner,
+        owner_client,
+        conversation_store,
+        initializer=getattr(app_state, "runner_session_initializer", None),
+        suppress_recovery_turn=True,
+    )
+    return await _heal_subagent_runner_binding_via_parent(
+        child_conv,
+        runner_router,
+        getattr(app_state, "tunnel_registry", None),
+        conversation_store,
+    )
 
 
 async def _recover_subagent_status_forward_via_parent(
@@ -11216,6 +11267,7 @@ __all__ = [
     "_spawn_native_blocked_notice_forward",
     "_wait_for_host_bound_runner_client",
     "_wake_parent_for_blocked_child",
+    "_wake_subagent_host_runner",
     "configure_subagent_block_notifier",
     "ensure_runner_connected",
 ]
