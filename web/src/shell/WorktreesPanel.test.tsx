@@ -9,6 +9,7 @@ import {
   useBranchConflicts,
 } from "@/hooks/useBranchDiff";
 import type * as BranchDiffModule from "@/hooks/useBranchDiff";
+import type { WorktreeSetupStatus } from "@/hooks/useBranchDiff";
 import type { ChildSessionInfo } from "@/hooks/useChildSessions";
 import {
   LandError,
@@ -120,6 +121,7 @@ function child(overrides: Partial<ChildSessionInfo>): ChildSessionInfo {
 function branchResult(
   files: { path: string; added: number; removed: number }[],
   ports: { index: number; base: number; span: number } | null = null,
+  setup: WorktreeSetupStatus | null = null,
 ) {
   return {
     data: {
@@ -128,6 +130,7 @@ function branchResult(
       base: "main",
       mergeBase: "abc",
       ports,
+      setup,
       data: files.map((file) => ({
         path: file.path,
         name: file.path,
@@ -192,6 +195,45 @@ describe("WorktreesPanel", () => {
     const ports = screen.getByTestId("worktree-ports");
     expect(ports.textContent).toBe(":3020–3029");
     expect(ports.getAttribute("title")).toContain("PORT=3020");
+  });
+
+  it("shows a running or failed background setup, and nothing once it succeeded", () => {
+    const setup = (state: WorktreeSetupStatus["state"]): WorktreeSetupStatus => ({
+      state,
+      command: "pnpm install",
+      exit_code: state === "failed" ? 1 : null,
+      error: state === "failed" ? "exit 1: ERR_PNPM_OUTDATED_LOCKFILE" : null,
+      log: "/repo/.git/worktrees/x/omnigent-setup.log",
+    });
+    vi.mocked(useBranchChanges).mockImplementation(
+      (id: string | undefined) =>
+        branchResult(
+          [],
+          null,
+          setup(id === "conv_run" ? "running" : id === "conv_fail" ? "failed" : "ok"),
+        ) as ReturnType<typeof useBranchChanges>,
+    );
+    render(
+      <MemoryRouter>
+        <WorktreesPanel
+          conversationId="conv_root"
+          sessions={[
+            child({ id: "conv_run", session_name: "run", git_branch: "omni/r" }),
+            child({ id: "conv_fail", session_name: "fail", git_branch: "omni/f" }),
+            child({ id: "conv_ok", session_name: "ok", git_branch: "omni/o" }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    const chips = screen.getAllByTestId("worktree-setup");
+    // "Needs input" (the failed setup) sorts above "Running".
+    expect(chips.map((chip) => [chip.getAttribute("data-state"), chip.textContent])).toEqual([
+      ["failed", "setup failed"],
+      ["running", "setting up…"],
+    ]);
+    expect(chips[0].getAttribute("title")).toContain("ERR_PNPM_OUTDATED_LOCKFILE");
+    expect(chips[0].getAttribute("title")).toContain("omnigent-setup.log");
   });
 
   it("opens a file straight into the child's branch diff", () => {
@@ -582,5 +624,13 @@ describe("task board", () => {
       taskStage(child({ busy: true, pending_elicitations_count: 2 }), { landed: false, data: [] }),
     ).toBe("input");
     expect(taskStage(child({}), undefined)).toBe("idle");
+  });
+
+  it("counts a background setup as running, and a failed one without changes as needing input", () => {
+    const setup = (state: string) => ({ landed: false, data: [], setup: { state } });
+    expect(taskStage(child({}), setup("running"))).toBe("running");
+    expect(taskStage(child({}), setup("failed"))).toBe("input");
+    expect(taskStage(child({}), { ...setup("failed"), data: [{}] })).toBe("review");
+    expect(taskStage(child({}), setup("ok"))).toBe("idle");
   });
 });

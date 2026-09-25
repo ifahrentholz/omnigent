@@ -63,7 +63,9 @@ The worker addresses the comments in its worktree and commits again.
 ## Preparing worktrees
 
 If tasks need git-ignored files (`.env`) or installed dependencies, commit a
-`.omnigent/worktree.yaml` to your repository. See
+`.omnigent/worktree.yaml` to your repository. A long install goes in
+`setup_async`: it runs in the background and the worker starts once it
+finished. See
 [Preparing worktrees](../../docs/AGENT_YAML_SPEC.md#preparing-worktrees-omnigentworktreeyaml).
 
 Each worktree also gets its own port range for dev servers (`$PORT`,
