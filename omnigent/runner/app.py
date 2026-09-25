@@ -8451,6 +8451,11 @@ def create_runner_app(
         msg_body: _JsonObject,
         conv: str,
     ) -> None:
+        from omnigent.host.worktree_async_setup import await_worktree_setup
+
+        # A worktree whose background setup still runs holds the turn; a failed
+        # setup fails one turn so the orchestrator hears about it.
+        await await_worktree_setup(await _session_runtime_cwd(conv))
         _dispatched_agent_id = cast(str | None, msg_body.get("agent_id"))
         _prior_agent_id = _session_agent_ids.get(conv)
         if (

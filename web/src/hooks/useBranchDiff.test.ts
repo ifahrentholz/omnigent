@@ -66,6 +66,7 @@ describe("fetchBranchChanges", () => {
       mergeBase: null,
       landed: false,
       ports: null,
+      setup: null,
       data: [],
     });
   });

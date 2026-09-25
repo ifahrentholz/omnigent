@@ -10,8 +10,10 @@ worktree needs:
 copy:            # git-ignored files to copy from the main checkout (globs)
   - .env
   - config/*.local.json
-setup: pnpm install --frozen-lockfile --prefer-offline
+setup: cp .env.example .env
 setup_timeout: 60  # seconds, capped at 90
+setup_async: pnpm install --frozen-lockfile  # may run longer, in the background
+setup_async_timeout: 1800  # seconds, capped at 4 hours
 ports:           # per-worktree port range, see omnigent.host.worktree_ports
   base: 3000
   span: 10
@@ -19,8 +21,9 @@ ports:           # per-worktree port range, see omnigent.host.worktree_ports
 
 Runs on the host right after ``git worktree add`` and before the session
 starts. The whole worktree create must answer the server within its frame
-timeout, so ``setup`` is capped; long cold installs belong in the agent's
-first task instead.
+timeout, so ``setup`` is capped. ``setup_async`` starts afterwards in the
+background (see :mod:`omnigent.host.worktree_async_setup`); the worker's
+first turn waits for it.
 """
 
 from __future__ import annotations
@@ -35,6 +38,11 @@ from pathlib import Path
 import yaml
 
 from omnigent.host.git_worktree import WorktreeError
+from omnigent.host.worktree_async_setup import (
+    DEFAULT_ASYNC_SETUP_TIMEOUT_S,
+    MAX_ASYNC_SETUP_TIMEOUT_S,
+    start_async_setup,
+)
 from omnigent.host.worktree_ports import (
     DEFAULT_PORT_BASE,
     DEFAULT_PORT_SPAN,
@@ -58,6 +66,8 @@ class WorktreeSetup:
     :param copy: Glob patterns, relative to the main checkout, of files to copy.
     :param setup: Shell command run inside the new worktree, or ``None``.
     :param setup_timeout: Seconds before ``setup`` is aborted.
+    :param setup_async: Shell command started in the background, or ``None``.
+    :param setup_async_timeout: Seconds before ``setup_async`` is killed.
     :param port_base: Base of the per-worktree port ranges, or ``None`` when
         the repo turned port allocation off.
     :param port_span: Ports per worktree.
@@ -66,6 +76,8 @@ class WorktreeSetup:
     copy: list[str] = field(default_factory=list)
     setup: str | None = None
     setup_timeout: float = MAX_SETUP_TIMEOUT_S
+    setup_async: str | None = None
+    setup_async_timeout: float = DEFAULT_ASYNC_SETUP_TIMEOUT_S
     port_base: int | None = DEFAULT_PORT_BASE
     port_span: int = DEFAULT_PORT_SPAN
 
@@ -119,17 +131,37 @@ def load_worktree_setup(*roots: Path) -> WorktreeSetup | None:
     setup = raw.get("setup")
     if setup is not None and (not isinstance(setup, str) or not setup.strip()):
         raise WorktreeError(f"{CONFIG_PATH}: 'setup' must be a non-empty command string")
-    timeout = raw.get("setup_timeout", MAX_SETUP_TIMEOUT_S)
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
-        raise WorktreeError(f"{CONFIG_PATH}: 'setup_timeout' must be a positive number")
+    timeout = _positive_seconds(raw, "setup_timeout", MAX_SETUP_TIMEOUT_S)
+    setup_async = raw.get("setup_async")
+    if setup_async is not None and (not isinstance(setup_async, str) or not setup_async.strip()):
+        raise WorktreeError(f"{CONFIG_PATH}: 'setup_async' must be a non-empty command string")
+    async_timeout = _positive_seconds(raw, "setup_async_timeout", DEFAULT_ASYNC_SETUP_TIMEOUT_S)
     port_base, port_span = _parse_ports(raw.get("ports"))
     return WorktreeSetup(
         copy=list(copy),
         setup=setup.strip() if isinstance(setup, str) else None,
-        setup_timeout=min(float(timeout), MAX_SETUP_TIMEOUT_S),
+        setup_timeout=min(timeout, MAX_SETUP_TIMEOUT_S),
+        setup_async=setup_async.strip() if isinstance(setup_async, str) else None,
+        setup_async_timeout=min(async_timeout, MAX_ASYNC_SETUP_TIMEOUT_S),
         port_base=port_base,
         port_span=port_span,
     )
+
+
+def _positive_seconds(raw: dict[str, object], key: str, default: float) -> float:
+    """
+    Validate an optional duration field.
+
+    :param raw: The parsed config mapping.
+    :param key: Field name, e.g. ``"setup_timeout"``.
+    :param default: Value when the field is absent.
+    :returns: The duration in seconds.
+    :raises WorktreeError: When the value is not a positive number.
+    """
+    value = raw.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise WorktreeError(f"{CONFIG_PATH}: {key!r} must be a positive number")
+    return float(value)
 
 
 def _copy_files(source_root: Path, worktree: Path, patterns: list[str]) -> None:
@@ -191,7 +223,7 @@ def _allocate_ports(worktree: Path, config: WorktreeSetup) -> WorktreePorts | No
 
 def apply_worktree_setup(source_root: Path, worktree: Path) -> WorktreeSetup | None:
     """
-    Allocate ports, copy local files and run the setup command for a new worktree.
+    Prepare a new worktree: ports, local files, ``setup``, then ``setup_async``.
 
     :param source_root: The main checkout the worktree was created from.
     :param worktree: The new worktree directory.
@@ -204,32 +236,44 @@ def apply_worktree_setup(source_root: Path, worktree: Path) -> WorktreeSetup | N
     if config is None:
         return None
     _copy_files(source_root, worktree, config.copy)
-    if config.setup is None:
-        return config
     env = {
         **os.environ,
         **(ports.env() if ports is not None else {}),
         "OMNIGENT_WORKTREE": str(worktree),
         "OMNIGENT_WORKTREE_SOURCE": str(source_root),
     }
+    if config.setup is not None:
+        _run_setup(worktree, config.setup, config.setup_timeout, env)
+    if config.setup_async is not None:
+        start_async_setup(worktree, config.setup_async, config.setup_async_timeout, env)
+    return config
+
+
+def _run_setup(worktree: Path, command: str, timeout: float, env: dict[str, str]) -> None:
+    """
+    Run the synchronous ``setup`` command.
+
+    :param worktree: The new worktree directory.
+    :param command: The shell command.
+    :param timeout: Seconds before it is aborted.
+    :param env: Environment for the command.
+    :raises WorktreeError: When the command fails or times out.
+    """
     try:
         result = subprocess.run(
-            config.setup,
+            command,
             shell=True,
             cwd=worktree,
             env=env,
             capture_output=True,
             text=True,
-            timeout=config.setup_timeout,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise WorktreeError(
-            f"worktree setup {config.setup!r} timed out after {config.setup_timeout:.0f}s"
-        ) from exc
+        raise WorktreeError(f"worktree setup {command!r} timed out after {timeout:.0f}s") from exc
     if result.returncode != 0:
         raise WorktreeError(
-            f"worktree setup {config.setup!r} failed (exit {result.returncode}): "
+            f"worktree setup {command!r} failed (exit {result.returncode}): "
             f"{_tail(result.stderr or result.stdout)}"
         )
-    return config

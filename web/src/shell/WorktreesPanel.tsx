@@ -117,12 +117,15 @@ const STAGES: { stage: TaskStage; label: string }[] = [
  */
 export function taskStage(
   child: ChildSessionInfo,
-  changes: { landed: boolean; data: unknown[] } | undefined,
+  changes: { landed: boolean; data: unknown[]; setup?: { state: string } | null } | undefined,
 ): TaskStage {
   if (child.pending_elicitations_count > 0) return "input";
-  if (child.busy) return "running";
+  // A worker waiting for its worktree's background setup is on its way.
+  if (child.busy || changes?.setup?.state === "running") return "running";
   if (changes?.landed) return "landed";
   if ((changes?.data.length ?? 0) > 0) return "review";
+  // The setup failed before the worker changed anything: the user must act.
+  if (changes?.setup?.state === "failed") return "input";
   return "idle";
 }
 
@@ -226,6 +229,7 @@ function WorktreeRow({
   const base = changes.data?.base ?? child.git_base_branch;
   const unavailable = changes.data && !changes.data.available ? changes.data.reason : null;
   const ports = changes.data?.ports ?? null;
+  const setup = changes.data?.setup ?? null;
   const prediction = useBranchConflicts(
     child.id,
     rivals.map((rival) => rival.branch),
@@ -328,6 +332,26 @@ function WorktreeRow({
               >
                 <TriangleAlertIcon aria-hidden="true" className="size-3" />
                 {rivalConflicts.length > 0 ? "conflict" : `${overlaps.size} shared`}
+              </span>
+            )}
+            {setup && setup.state !== "ok" && (
+              <span
+                data-testid="worktree-setup"
+                data-state={setup.state}
+                className={cn(
+                  "flex shrink-0 items-center gap-0.5",
+                  setup.state === "failed" ? "text-destructive" : "text-muted-foreground",
+                )}
+                title={
+                  setup.state === "failed"
+                    ? `Setup \`${setup.command}\` failed: ${setup.error ?? "unknown error"}${setup.log ? `\nLog: ${setup.log}` : ""}`
+                    : `Running \`${setup.command}\`; the worker starts once it finished`
+                }
+              >
+                {setup.state === "failed" && (
+                  <TriangleAlertIcon aria-hidden="true" className="size-3" />
+                )}
+                {setup.state === "failed" ? "setup failed" : "setting up…"}
               </span>
             )}
             {ports && (

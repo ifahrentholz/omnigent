@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from omnigent.entities.environment_filesystem import InvalidPath
+from omnigent.host.worktree_async_setup import log_path, read_async_setup
 from omnigent.host.worktree_ports import read_worktree_ports
 from omnigent.runner.environment_filesystem import _validate_path
 from omnigent.runtime.filesystem_registry import _git_timeout_seconds
@@ -238,8 +239,9 @@ def branch_changes(
     :param root: Absolute workspace directory, e.g. a task worktree.
     :param session_id: Unused; accepted for the shared call convention.
     :param base: Base branch, e.g. ``"main"``; inferred when ``None``.
-    :returns: A list payload plus ``base``, ``merge_base``, ``landed`` and
-        the worktree's ``ports`` allocation (or ``None``).
+    :returns: A list payload plus ``base``, ``merge_base``, ``landed``, the
+        worktree's ``ports`` allocation and its background ``setup`` state
+        (each ``None`` when absent).
     :raises BranchDiffError: On a non-git workspace or unresolvable base.
     """
     del session_id
@@ -273,6 +275,11 @@ def branch_changes(
         "merge_base": merge_base,
         "landed": _is_landed(root, base_name, data, has_untracked=bool(untracked.strip())),
         "ports": ports.to_json() if (ports := read_worktree_ports(root)) is not None else None,
+        "setup": (
+            setup.to_json(log_path(root))
+            if (setup := read_async_setup(root)) is not None
+            else None
+        ),
     }
 
 
