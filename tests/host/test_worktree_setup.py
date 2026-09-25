@@ -14,7 +14,11 @@ from pathlib import Path
 import pytest
 
 from omnigent.host.git_worktree import WorktreeError, create_worktree, list_worktrees
-from omnigent.host.worktree_setup import MAX_SETUP_TIMEOUT_S, load_worktree_setup
+from omnigent.host.worktree_setup import (
+    MAX_SETUP_TIMEOUT_S,
+    is_worktree_config_error,
+    load_worktree_setup,
+)
 
 _GIT_ENV = {
     "GIT_AUTHOR_NAME": "t",
@@ -130,3 +134,20 @@ def test_setup_timeout_is_capped(tmp_path: Path) -> None:
     config = load_worktree_setup(tmp_path)
     assert config is not None
     assert config.setup_timeout == MAX_SETUP_TIMEOUT_S
+
+
+def test_config_and_setup_failures_are_recognized(tmp_path: Path) -> None:
+    """The runner tells repo-caused create failures from infra ones by message."""
+    repo = _repo_with_config(tmp_path, "setup: [unclosed\n")
+    with pytest.raises(WorktreeError) as bad_yaml:
+        create_worktree(repo_path=str(repo), branch_name="omni/task-yaml")
+    assert is_worktree_config_error(f"worktree creation failed: {bad_yaml.value.message}")
+
+    (repo / ".omnigent" / "worktree.yaml").write_text("setup: exit 4\n")
+    _git(repo, "commit", "-qam", "failing setup")
+    with pytest.raises(WorktreeError) as failing:
+        create_worktree(repo_path=str(repo), branch_name="omni/task-setup")
+    assert is_worktree_config_error(failing.value.message)
+
+    assert not is_worktree_config_error("host 'h1' is offline; reconnect the host and try again")
+    assert not is_worktree_config_error("a branch named 'omni/x' already exists")

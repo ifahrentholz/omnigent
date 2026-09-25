@@ -54,6 +54,7 @@ from omnigent.harness_aliases import (
     is_native_harness,
     native_terminal_name,
 )
+from omnigent.host.worktree_setup import is_worktree_config_error
 from omnigent.inner.executor import ToolCallStatus, classify_tool_result
 from omnigent.models.model_override import (
     harness_supports_model_override,
@@ -3096,6 +3097,15 @@ async def _execute_subagent_tool_unlocked(
                     and 400 <= resp.status_code < 500
                     and not _is_child_name_collision(resp)
                 ):
+                    # A broken worktree.yaml or failing setup is the repo's
+                    # own problem: running unisolated would only hide it.
+                    reason = _omnigent_error_message(resp) or resp.text[:500]
+                    if is_worktree_config_error(reason):
+                        return (
+                            f"Error: could not prepare a worktree for sub-agent "
+                            f"{session_name!r}: {reason}. Fix .omnigent/worktree.yaml, or "
+                            "dispatch with worktree: false to run it in the shared checkout."
+                        )
                     # Best-effort isolation: a host/git failure (offline
                     # host, unknown base ref) degrades to the shared
                     # workspace instead of failing the dispatch.

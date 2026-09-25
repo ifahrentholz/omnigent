@@ -560,6 +560,43 @@ async def test_auto_mode_falls_back_when_worktree_creation_fails(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "worktree creation failed: cannot read .omnigent/worktree.yaml: "
+        "mapping values are not allowed here",
+        "worktree creation failed: worktree setup 'pnpm install' failed (exit 1): ERR",
+    ],
+)
+async def test_broken_worktree_config_fails_instead_of_running_unisolated(
+    monkeypatch: pytest.MonkeyPatch, git_repo: Path, reason: str
+) -> None:
+    """
+    A spec-default isolation that fails on the repo's own worktree.yaml or
+    setup is reported, never retried in the shared checkout.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    :param git_repo: Initialized repository fixture.
+    :param reason: The server's create error.
+    """
+
+    def _on_create(attempt: int, body: dict[str, Any]) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"code": "invalid_input", "message": reason}})
+
+    output, bodies = await _send_with_create_handler(
+        monkeypatch,
+        agent_spec=_parent_spec(worktree_default=True),
+        parent={"id": "conv_parent", "host_id": "host_1", "workspace": str(git_repo)},
+        args={"input": "fix login"},
+        on_create=_on_create,
+    )
+    assert output.startswith("Error: could not prepare a worktree for sub-agent"), output
+    assert reason in output
+    assert "worktree: false" in output
+    assert len(bodies) == 1, "no unisolated retry"
+
+
+@pytest.mark.asyncio
 async def test_required_worktree_conflict_is_not_retried_as_name_clash(
     monkeypatch: pytest.MonkeyPatch, git_repo: Path
 ) -> None:
