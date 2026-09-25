@@ -1,7 +1,8 @@
 // Mutations for landing a task worktree's branch:
 //   POST /v1/sessions/{id}/resources/git/merge  (merge into the base, server-side)
-//   POST /v1/sessions/{id}/events               (ask the worker to open a PR,
-//                                                or the orchestrator to coordinate)
+//   POST /v1/sessions/{id}/events               (ask the worker to open a PR or to
+//                                                update from its base, or the
+//                                                orchestrator to coordinate)
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -68,6 +69,28 @@ const OPEN_PR_REQUEST =
   "Your task is ready for review. Push your branch and open a pull request with " +
   "`gh pr create` (clear title, what changed, how you verified it). Do not merge it.";
 
+/**
+ * Request asking a worker to merge its base branch and resolve the conflicts.
+ *
+ * @param base - The branch the task lands into, e.g. "main".
+ * @param files - Paths predicted to conflict; may be empty.
+ * @param note - The reviewer's guidance on which side wins, if any.
+ */
+export function updateFromBaseRequest(base: string, files: string[], note?: string): string {
+  const where = files.length > 0 ? ` in: ${files.join(", ")}` : "";
+  const lines = [
+    `\`${base}\` has changes that conflict with your branch${where}.`,
+    `Merge the local \`${base}\` branch into your branch (\`git merge ${base}\`; do not fetch ` +
+      "or rebase), resolve every conflict so your task still does what it should on top of " +
+      "what landed, run the relevant tests and commit the merge.",
+    "If the two changes contradict each other and nothing here settles which one wins, " +
+      "abort the merge (`git merge --abort`) and ask instead of guessing.",
+  ];
+  const guidance = note?.trim();
+  if (guidance) lines.push("", `Reviewer's note: ${guidance}`);
+  return lines.join("\n");
+}
+
 /** Post a user message into a session. */
 async function postUserMessage(sessionId: string, text: string): Promise<void> {
   const res = await authenticatedFetch(`/v1/sessions/${encodeURIComponent(sessionId)}/events`, {
@@ -103,5 +126,28 @@ export function useNotifyOrchestrator(orchestratorId: string | undefined) {
 export function useRequestPullRequest(sessionId: string) {
   return useMutation({
     mutationFn: () => postUserMessage(sessionId, OPEN_PR_REQUEST),
+  });
+}
+
+/** One worker to bring up to date with its base. */
+export interface UpdateFromBase {
+  sessionId: string;
+  base: string;
+  files: string[];
+  note?: string;
+}
+
+/** Ask worker sessions to merge their base and resolve the conflicts. */
+export function useRequestUpdateFromBase() {
+  return useMutation({
+    mutationFn: (requests: UpdateFromBase[]) =>
+      Promise.all(
+        requests.map((request) =>
+          postUserMessage(
+            request.sessionId,
+            updateFromBaseRequest(request.base, request.files, request.note),
+          ),
+        ),
+      ).then(() => undefined),
   });
 }
