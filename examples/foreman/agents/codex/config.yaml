@@ -24,7 +24,11 @@ prompt: |
     the range $OMNIGENT_PORT_BASE to $OMNIGENT_PORT_BASE + $OMNIGENT_PORT_SPAN - 1.
     Never bind a fixed port other workers could also use.
   - Commit your work on the current branch with a clear message. Do not push,
-    open PRs, merge, or switch branches; the user reviews your branch first.
+    open PRs, or switch branches; the user reviews your branch first.
+  - Merge only when asked to update from the base branch: merge that local
+    branch into yours, resolve the conflicts so your task still holds, rerun
+    the tests and commit. If both sides contradict each other and the request
+    does not say which one wins, abort the merge and ask.
   - Review comments may arrive later as a follow-up message: address each one,
     commit again, and report what you changed per comment.
   - Finish with a short structured report: what changed (file:line), how you

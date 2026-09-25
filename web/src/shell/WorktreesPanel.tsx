@@ -7,6 +7,8 @@
 // the file in its branch diff (`?file=…&diff=1&diffsrc=branch`), where the
 // regular comment layer annotates that worktree. Tasks sharing files get a
 // `git merge-tree` dry-run that tells real conflicts from clean overlaps.
+// A task that conflicts with its base can ask its worker to merge the base
+// and resolve; landing a task can ask the tasks it conflicts with to follow.
 
 import { ChevronDownIcon, ChevronRightIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
@@ -25,8 +27,10 @@ import {
   LandError,
   type LandStrategy,
   useLandBranch,
+  type UpdateFromBase,
   useNotifyOrchestrator,
   useRequestPullRequest,
+  useRequestUpdateFromBase,
 } from "@/hooks/useLandBranch";
 import { Link, useLocation } from "@/lib/routing";
 import { sessionNavigationSearch } from "@/lib/sessionNavigation";
@@ -45,6 +49,14 @@ interface WorktreesPanelProps {
 interface RivalTask {
   branch: string;
   title: string;
+  sessionId: string;
+}
+
+/** A task to ask to update from the base once this one lands. */
+interface FollowUpTask {
+  sessionId: string;
+  title: string;
+  files: string[];
 }
 
 /** Message asking the orchestrator to sequence conflicting tasks. */
@@ -64,7 +76,7 @@ export function conflictNotice(
     ...lines,
     "",
     "Please coordinate: let one task finish and land first, then ask the other " +
-      `(sys_session_send) to rebase onto ${base ?? "its base"} and resolve the conflicts.`,
+      `(sys_session_send) to merge ${base ?? "its base"} into its branch and resolve the conflicts.`,
   ].join("\n");
 }
 
@@ -143,7 +155,11 @@ export function WorktreesPanel({ conversationId, sessions, orchestratorId }: Wor
         (other) =>
           other.id !== child.id && [...(pathsOf.get(other.id) ?? [])].some((p) => mine.has(p)),
       )
-      .map((other) => ({ branch: other.git_branch!, title: taskTitle(other) }));
+      .map((other) => ({
+        branch: other.git_branch!,
+        title: taskTitle(other),
+        sessionId: other.id,
+      }));
   };
   if (worktrees.length === 0) {
     return (
@@ -226,6 +242,10 @@ function WorktreeRow({
         prediction.data?.results.find((verdict) => verdict.ref === rival.branch)?.clean === true,
     );
   const committedOnly = prediction.data?.dirty ? " (committed changes only)" : "";
+  const followUps: FollowUpTask[] = rivalConflicts.flatMap((verdict) => {
+    const rival = rivals.find((candidate) => candidate.branch === verdict.ref);
+    return rival ? [{ sessionId: rival.sessionId, title: rival.title, files: verdict.files }] : [];
+  });
 
   return (
     <li
@@ -327,9 +347,17 @@ function WorktreeRow({
       </div>
       {expanded && (
         <div className="pb-2 pl-7 pr-2">
-          <LandActions sessionId={child.id} base={base ?? null} disabled={child.busy} />
+          <LandActions
+            sessionId={child.id}
+            base={base ?? null}
+            disabled={child.busy}
+            followUps={followUps}
+          />
           {conflicts.length > 0 && (
             <ConflictDetails
+              sessionId={child.id}
+              base={base ?? null}
+              baseConflict={baseConflict}
               conflicts={conflicts}
               notice={conflictNotice(
                 { title, branch: child.git_branch ?? "", sessionId: child.id },
@@ -399,22 +427,46 @@ function WorktreeRow({
 
 /**
  * "Land" controls for one task: merge its branch into the base, or ask the
- * worker to open a pull request instead.
+ * worker to open a pull request instead. Tasks that conflict with this one
+ * can be asked to update from the base once it landed.
  */
 function LandActions({
   sessionId,
   base,
   disabled,
+  followUps,
 }: {
   sessionId: string;
   base: string | null;
   disabled: boolean;
+  followUps: FollowUpTask[];
 }) {
   const [confirming, setConfirming] = useState(false);
   const [strategy, setStrategy] = useState<LandStrategy>("merge");
+  const [askFollowUps, setAskFollowUps] = useState(true);
   const land = useLandBranch(sessionId);
   const requestPr = useRequestPullRequest(sessionId);
+  const updateOthers = useRequestUpdateFromBase();
   const target = base ?? "base";
+  const followUpTitles = followUps.map((task) => task.title).join(", ");
+
+  const landBranch = () =>
+    land.mutate(
+      { strategy },
+      {
+        onSuccess: (result) => {
+          if (!askFollowUps || followUps.length === 0) return;
+          updateOthers.mutate(
+            followUps.map((task): UpdateFromBase => ({
+              sessionId: task.sessionId,
+              base: result.base,
+              files: task.files,
+            })),
+          );
+        },
+        onSettled: () => setConfirming(false),
+      },
+    );
 
   return (
     <div className="mb-2 flex flex-col gap-1 text-xs">
@@ -433,7 +485,7 @@ function LandActions({
             <button
               type="button"
               disabled={land.isPending}
-              onClick={() => land.mutate({ strategy }, { onSettled: () => setConfirming(false) })}
+              onClick={landBranch}
               className="rounded-full border border-border px-2 py-0.5 font-medium hover:bg-accent disabled:opacity-50"
             >
               {land.isPending ? "Landing…" : `Land into ${target}`}
@@ -445,6 +497,16 @@ function LandActions({
             >
               Cancel
             </button>
+            {followUps.length > 0 && (
+              <label className="flex w-full items-center gap-1 text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={askFollowUps}
+                  onChange={(event) => setAskFollowUps(event.target.checked)}
+                />
+                Then ask {followUpTitles} to update from {target}
+              </label>
+            )}
           </>
         ) : (
           <>
@@ -477,8 +539,10 @@ function LandActions({
       {land.isSuccess && (
         <p className="text-success">
           Landed into {land.data.base} ({land.data.commit.slice(0, 7)}).
+          {updateOthers.isSuccess && ` Asked ${followUpTitles} to update from ${land.data.base}.`}
         </p>
       )}
+      {updateOthers.isError && <p className="text-destructive">{updateOthers.error.message}</p>}
       {land.isError && (
         <div className="text-destructive">
           <p>{land.error.message}</p>
@@ -495,18 +559,33 @@ function LandActions({
   );
 }
 
+/**
+ * Predicted conflicts of one task, with the ways to resolve them: the worker
+ * merges its base (conflicts with the base), or one of two conflicting open
+ * tasks lands first.
+ */
 function ConflictDetails({
+  sessionId,
+  base,
+  baseConflict,
   conflicts,
   notice,
   orchestratorId,
   committedOnly,
 }: {
+  sessionId: string;
+  base: string | null;
+  baseConflict?: BranchConflictVerdict;
   conflicts: BranchConflictVerdict[];
   notice: string;
   orchestratorId?: string;
   committedOnly: boolean;
 }) {
   const notify = useNotifyOrchestrator(orchestratorId);
+  const resolve = useRequestUpdateFromBase();
+  const [resolving, setResolving] = useState(false);
+  const [note, setNote] = useState("");
+  const target = base ?? "base";
   return (
     <div data-testid="worktree-conflicts" className="mb-2 flex flex-col gap-1 text-xs">
       <p className="font-medium text-destructive">
@@ -520,6 +599,56 @@ function ConflictDetails({
           </li>
         ))}
       </ul>
+      {baseConflict && base ? (
+        resolving ? (
+          <div className="flex flex-col gap-1">
+            <textarea
+              aria-label="Note for the worker"
+              placeholder={`Optional: which side wins, e.g. "keep both" or "${target} wins"`}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              rows={2}
+              className="rounded border border-border bg-transparent px-1 py-0.5"
+            />
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={resolve.isPending}
+                onClick={() =>
+                  resolve.mutate([{ sessionId, base, files: baseConflict.files, note }], {
+                    onSuccess: () => setResolving(false),
+                  })
+                }
+                className="rounded-full border border-border px-2 py-0.5 font-medium hover:bg-accent disabled:opacity-50"
+              >
+                {resolve.isPending ? "Asking…" : "Ask worker to resolve"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setResolving(false)}
+                className="rounded-full px-2 py-0.5 text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={resolve.isSuccess}
+            title={`Ask the worker to merge ${target} into its branch and resolve the conflicts`}
+            onClick={() => setResolving(true)}
+            className="self-start rounded-full border border-border px-2 py-0.5 hover:bg-accent disabled:opacity-50"
+          >
+            {resolve.isSuccess ? "Resolution requested" : "Resolve…"}
+          </button>
+        )
+      ) : (
+        <p className="text-muted-foreground">
+          Land one of the conflicting tasks first; the other can then update from {target}.
+        </p>
+      )}
+      {resolve.isError && <p className="text-destructive">{resolve.error.message}</p>}
       {orchestratorId && (
         <button
           type="button"
