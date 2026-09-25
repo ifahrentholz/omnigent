@@ -281,8 +281,9 @@ def _is_landed(root: str, base: str, data: list[dict[str, Any]], *, has_untracke
     Report whether the branch's committed work is already on its base.
 
     True when every changed path has the same content on the base tip as in
-    the branch's ``HEAD`` and nothing is uncommitted, which covers merge and
-    squash landings alike (the merge-base does not move after a squash).
+    the branch's ``HEAD`` and nothing is uncommitted (a squash landing: the
+    merge-base does not move), or when nothing changed because ``HEAD`` was
+    merged into the base as a side branch (a merge-commit landing).
 
     :param root: Absolute workspace directory.
     :param base: Base branch name.
@@ -290,13 +291,15 @@ def _is_landed(root: str, base: str, data: list[dict[str, Any]], *, has_untracke
     :param has_untracked: Whether untracked files exist.
     :returns: ``True`` when the task has landed.
     """
-    if not data or has_untracked:
+    if has_untracked:
         return False
     rc, dirty = _git(root, "status", "--porcelain", "--untracked-files=no")
     if rc != 0 or dirty.strip():
         return False
     for candidate in (base, f"origin/{base}"):
         if _commit_exists(root, candidate):
+            if not data:
+                return _merged_as_side_branch(root, candidate)
             paths: list[str] = []
             for entry in data:
                 paths.append(str(entry["path"]))
@@ -307,6 +310,33 @@ def _is_landed(root: str, base: str, data: list[dict[str, Any]], *, has_untracke
             )
             return rc == 0
     return False
+
+
+def _merged_as_side_branch(root: str, base: str) -> bool:
+    """
+    Report whether ``HEAD`` reached ``base`` through a merge commit.
+
+    A merged task tip is on the base's history but off its first-parent
+    chain; the tip of a branch without commits of its own sits on that chain.
+
+    :param root: Absolute workspace directory.
+    :param base: Base branch ref, e.g. ``"main"``.
+    :returns: ``True`` when ``HEAD`` was merged into ``base``.
+    """
+    rc, _ = _git(root, "merge-base", "--is-ancestor", "HEAD", base)
+    if rc != 0:
+        return False
+    rc, head = _git(root, "rev-parse", "HEAD")
+    if rc != 0:
+        return False
+    # Walk the base's first parents down to HEAD's history; the oldest step
+    # lands on HEAD itself only when HEAD is on that chain.
+    rc, walk = _git(root, "rev-list", "--first-parent", "--parents", base, "--not", "HEAD")
+    lines = walk.strip().splitlines()
+    if rc != 0 or not lines:
+        return False
+    oldest = lines[-1].split()
+    return len(oldest) > 1 and oldest[1] != head.strip()
 
 
 def branch_file_diff(
