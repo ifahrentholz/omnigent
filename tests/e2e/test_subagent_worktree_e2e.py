@@ -349,3 +349,90 @@ def test_worker_subagent_runs_in_its_own_worktree(
         except subprocess.TimeoutExpired:
             daemon.proc.kill()
             daemon.proc.wait()
+
+
+def test_failed_background_setup_fails_the_worker_and_tells_the_orchestrator(
+    live_server: str,
+    http_client: httpx.Client,
+    tmp_path: Path,
+    mock_llm_server_url: str,
+) -> None:
+    """
+    A ``setup_async`` that fails holds the worker's first turn, then fails it,
+    and the orchestrator is woken with the setup error instead of a result.
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / ".omnigent").mkdir()
+    (repo / ".omnigent" / "worktree.yaml").write_text(
+        "setup_async: sleep 2; echo cold install broke; exit 5\n"
+    )
+    git = ["git", "-C", str(repo), "-c", "user.name=e2e", "-c", "user.email=e2e@example.com"]
+    subprocess.run([*git, "add", ".omnigent"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "worktree setup"], check=True)
+    configure_mock_llm(
+        mock_llm_server_url,
+        [
+            {
+                "tool_calls": [
+                    {
+                        "call_id": "call_wt_setup",
+                        "name": "sys_session_send",
+                        "arguments": json.dumps(
+                            {"agent": "worker", "title": "deps", "args": "run the tests"}
+                        ),
+                    }
+                ]
+            },
+            {"text": "Dispatched the worker."},
+            {
+                "tool_calls": [
+                    {"call_id": "call_inbox", "name": "sys_read_inbox", "arguments": "{}"}
+                ]
+            },
+            {"text": "The worker's worktree setup failed."},
+        ],
+        key=_PARENT_MODEL,
+    )
+    configure_mock_llm(mock_llm_server_url, [{"text": _MARKER}], key=_WORKER_MODEL)
+
+    daemon = _spawn_host_daemon(
+        tmp_path=tmp_path, live_server=live_server, mock_llm_server_url=mock_llm_server_url
+    )
+    try:
+        _wait_for_host_online(http_client, daemon.host_id, timeout=30.0)
+        agent_id = lookup_agent_id(
+            http_client, upload_agent(http_client, _write_orchestrator_yaml(tmp_path))
+        )
+        created = http_client.post(
+            "/v1/sessions",
+            json={"agent_id": agent_id, "host_id": daemon.host_id, "workspace": str(repo)},
+            timeout=60.0,
+        )
+        assert created.status_code == 201, created.text
+        session_id = created.json()["id"]
+        resp = http_client.post(
+            f"/v1/sessions/{session_id}/events",
+            json={
+                "type": "message",
+                "data": {"role": "user", "content": [{"type": "input_text", "text": "go"}]},
+            },
+            timeout=60.0,
+        )
+        assert resp.status_code in (200, 202), resp.text
+
+        child = _wait_for_child(http_client, session_id)
+        # The inbox result the orchestrator reads carries the setup's output.
+        _wait_for_text(http_client, session_id, "cold install broke")
+        child_items = json.dumps(
+            http_client.get(f"/v1/sessions/{child['id']}").json().get("items", [])
+        )
+        assert _MARKER not in child_items, "the worker ran although its setup failed"
+        assert Path(child["workspace"]).is_dir(), "the failed worktree is kept for inspection"
+    finally:
+        daemon.proc.send_signal(signal.SIGTERM)
+        try:
+            daemon.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            daemon.proc.kill()
+            daemon.proc.wait()

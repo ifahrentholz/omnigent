@@ -201,6 +201,22 @@ def _worktree_root(path: Path) -> Path | None:
     return None
 
 
+def worktree_admin_dir(path: str | Path | None) -> Path | None:
+    """
+    Return the git admin directory of the linked worktree containing ``path``.
+
+    :param path: A directory inside a worktree, e.g. a session workspace.
+    :returns: ``<common>/worktrees/<name>``, or ``None`` outside a linked worktree.
+    """
+    if not path:
+        return None
+    try:
+        root = _worktree_root(Path(path).expanduser().resolve())
+        return _admin_dir(root) if root is not None else None
+    except OSError:
+        return None
+
+
 def read_worktree_ports(path: str | Path | None) -> WorktreePorts | None:
     """
     Return the port allocation of the worktree containing ``path``.
@@ -208,13 +224,7 @@ def read_worktree_ports(path: str | Path | None) -> WorktreePorts | None:
     :param path: A directory inside a worktree, e.g. a session workspace.
     :returns: The allocation, or ``None`` outside an allocated worktree.
     """
-    if not path:
-        return None
-    try:
-        root = _worktree_root(Path(path).expanduser().resolve())
-        admin = _admin_dir(root) if root is not None else None
-    except OSError:
-        return None
+    admin = worktree_admin_dir(path)
     return _read_allocation(admin) if admin is not None else None
 
 

@@ -50,7 +50,20 @@ export interface BranchChangesResult {
   landed: boolean;
   /** The worktree's port range for dev servers, when one is allocated. */
   ports: WorktreePorts | null;
+  /** The worktree's background setup (`setup_async`), when it has one. */
+  setup: WorktreeSetupStatus | null;
   data: BranchChangedFile[];
+}
+
+export interface WorktreeSetupStatus {
+  state: "running" | "ok" | "failed";
+  /** The `setup_async` command. */
+  command: string;
+  exit_code: number | null;
+  /** Why it failed, ending with the command's output. */
+  error: string | null;
+  /** Host path of the setup log. */
+  log: string | null;
 }
 
 export interface WorktreePorts {
@@ -73,6 +86,7 @@ interface BranchChangesWire {
   merge_base?: string;
   landed?: boolean;
   ports?: WorktreePorts | null;
+  setup?: WorktreeSetupStatus | null;
   data: {
     path: string;
     name: string;
@@ -102,6 +116,13 @@ function sessionUrl(sessionId: string, suffix: string, params: Record<string, st
   return `/v1/sessions/${encodeURIComponent(sessionId)}/resources/git/${suffix}${qs ? `?${qs}` : ""}`;
 }
 
+/** Poll a worktree while its background setup runs; nothing else signals its end. */
+function pollWhileSettingUp(query: { state: { data?: BranchChangesResult } }): number | false {
+  return query.state.data?.setup?.state === "running" ? SETUP_POLL_MS : false;
+}
+
+const SETUP_POLL_MS = 3_000;
+
 /** Fetch every file a session's branch changed since its base. */
 export async function fetchBranchChanges(
   sessionId: string,
@@ -116,6 +137,7 @@ export async function fetchBranchChanges(
       mergeBase: null,
       landed: false,
       ports: null,
+      setup: null,
       data: [],
     };
   }
@@ -129,6 +151,7 @@ export async function fetchBranchChanges(
     mergeBase: json.merge_base ?? null,
     landed: json.landed ?? false,
     ports: json.ports ?? null,
+    setup: json.setup ?? null,
     data: json.data.map((entry) => ({
       path: entry.path,
       name: entry.name,
@@ -184,6 +207,7 @@ export function useBranchChanges(
     retry: (failureCount, error) => shouldRetryRunnerOffline(failureCount, error),
     retryDelay: runnerOfflineRetryDelay,
     staleTime: 5_000,
+    refetchInterval: pollWhileSettingUp,
   });
 }
 
@@ -309,6 +333,7 @@ export function useBranchChangesForSessions(sessionIds: string[]) {
       queryKey: branchChangesQueryKey(sessionId),
       queryFn: () => fetchBranchChanges(sessionId),
       staleTime: 5_000,
+      refetchInterval: pollWhileSettingUp,
     })),
   });
 }

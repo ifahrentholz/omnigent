@@ -582,16 +582,33 @@ setup_timeout: 60  # seconds, capped at 90
 ```
 
 The setup runs on the host before the session starts. The worktree create has
-to answer within the server's timeout, so keep it short. Long cold installs
-belong in the agent's task. When setup fails or times out, the worktree and its
-new branch are removed again and the create reports the command's output.
+to answer within the server's timeout, so keep it short. When setup fails or
+times out, the worktree and its new branch are removed again and the create
+reports the command's output.
+
+For long cold installs, use `setup_async`. It starts in the background once the
+worktree exists (after `setup`), so the create returns at once:
+
+```yaml
+setup_async: pnpm install --frozen-lockfile
+setup_async_timeout: 1800  # seconds, default 1800, capped at 4 hours
+```
+
+The worker's first turn waits until the command finished. If it fails, times
+out or its process dies, that turn fails with the command's exit code and the
+end of its output, and the orchestrator receives the failure in its inbox. The
+worktree is kept for inspection, and later messages to the worker run
+normally. The Worktrees view shows "setting up…" while it runs and "setup
+failed" (hover for the output) afterwards. The full output is in
+`omnigent-setup.log` in the worktree's git directory
+(`.git/worktrees/<name>/`).
 
 #### Dev server ports
 
 Parallel tasks that start dev servers would collide on the same port. Every
 worktree therefore gets an index, unique among the repository's live
 worktrees, and a port range. Terminals, shell tools, harness processes and the
-`setup` command started inside the worktree see:
+`setup` and `setup_async` commands started inside the worktree see:
 
 | Variable | Example | Meaning |
 |---|---|---|
