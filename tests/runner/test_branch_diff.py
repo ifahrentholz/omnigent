@@ -198,6 +198,38 @@ def test_host_fallback_serves_the_same_payload(task_repo: Path) -> None:
     assert excinfo.value.status == 400
 
 
+def test_landed_after_merge_commit_into_base(task_repo: Path) -> None:
+    """A branch merged into the base with a merge commit reports landed with no changes."""
+    _git(task_repo, "add", "-A")
+    _git(task_repo, "commit", "-q", "-m", "wrap up")
+    main_wt = task_repo.parent / "main-checkout"
+    _git(task_repo, "worktree", "add", "-q", str(main_wt), "main")
+    _git(main_wt, "merge", "-q", "--no-ff", "-m", "land task", "task")
+
+    result = branch_changes(str(task_repo), base="main")
+    assert result["data"] == [], "the fork point moved to the task tip"
+    assert result["landed"] is True
+
+
+def test_branch_without_commits_is_not_landed(tmp_path: Path) -> None:
+    """A fresh branch sits on the base's history but never landed anything."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "a.txt").write_text("a\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "init")
+    _git(repo, "checkout", "-q", "-b", "task")
+    assert branch_changes(str(repo), base="main")["landed"] is False
+
+    _git(repo, "checkout", "-q", "main")
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "main moves on")
+    _git(repo, "checkout", "-q", "task")
+    assert branch_changes(str(repo), base="main")["landed"] is False
+
+
 def test_landed_after_squash_into_base(task_repo: Path) -> None:
     """A branch whose work reached the base (here: squashed) reports landed."""
     assert branch_changes(str(task_repo), base="main")["landed"] is False
