@@ -23,7 +23,10 @@ const h = vi.hoisted(() => ({
     };
   } | null,
   onMount: null as DiffOnMount | null,
-  commentOptions: null as { editorRef: { current: unknown }; mounted: boolean } | null,
+  commentOptions: {} as Record<
+    string,
+    { editorRef: { current: unknown }; mounted: boolean; canComment: boolean }
+  >,
 }));
 vi.mock("@monaco-editor/react", () => ({
   DiffEditor: (props: {
@@ -43,11 +46,16 @@ vi.mock("./monacoSetup", () => ({
   monacoLanguageId: vi.fn((lang: string) => lang),
   resolvedThemeToMonaco: vi.fn(() => "github-light"),
 }));
-// Capture the comment-layer options so we can assert the diff wires the
-// modified editor into it; return null so render works.
+// Capture each side's comment-layer options so we can assert the diff wires
+// both editors into it; return null so render works.
 vi.mock("./useMonacoCommentLayer", () => ({
-  useMonacoCommentLayer: (opts: { editorRef: { current: unknown }; mounted: boolean }) => {
-    h.commentOptions = opts;
+  useMonacoCommentLayer: (opts: {
+    editorRef: { current: unknown };
+    mounted: boolean;
+    canComment: boolean;
+    side?: string;
+  }) => {
+    h.commentOptions[opts.side ?? "after"] = opts;
     return null;
   },
 }));
@@ -143,7 +151,7 @@ function scrollStubs() {
 beforeEach(() => {
   h.diffProps = null;
   h.onMount = null;
-  h.commentOptions = null;
+  h.commentOptions = {};
 });
 afterEach(() => {
   cleanup();
@@ -230,10 +238,42 @@ describe("MonacoDiffViewer", () => {
     // The modified editor is handed to the comment hook and `mounted` flips, so
     // its listeners/decorations wire up. A regression here = comments silently
     // stop working in the diff.
-    expect(h.commentOptions?.editorRef.current).toBe(fakeModified);
-    expect(h.commentOptions?.mounted).toBe(true);
+    expect(h.commentOptions.after?.editorRef.current).toBe(fakeModified);
+    expect(h.commentOptions.after?.mounted).toBe(true);
     // CRLF "after" → model EOL set to CRLF (1) so comment offsets stay aligned.
     expect(setEOL).toHaveBeenCalledWith(1);
+  });
+
+  it("wires the original editor into a before-side layer, commentable only in split", async () => {
+    const originalSetEOL = vi.fn();
+    const fakeOriginal = { getModel: () => ({ setEOL: originalSetEOL }) };
+    const fakeModified = { getModel: () => ({ setEOL: vi.fn() }), ...scrollStubs() };
+    const mountWith = () =>
+      act(() => {
+        h.onMount?.(
+          {
+            getModifiedEditor: () => fakeModified,
+            getOriginalEditor: () => fakeOriginal,
+          } as unknown as Parameters<DiffOnMount>[0],
+          {
+            editor: { EndOfLineSequence: { LF: 0, CRLF: 1 } },
+          } as unknown as Parameters<DiffOnMount>[1],
+        );
+      });
+
+    const { rerender } = renderDiff({ before: "old\r\n", after: "new", layout: "split" });
+    await waitFor(() => expect(h.onMount).not.toBeNull());
+    mountWith();
+
+    expect(h.commentOptions.before?.editorRef.current).toBe(fakeOriginal);
+    expect(h.commentOptions.before?.canComment).toBe(true);
+    // CRLF "before" → the original model's EOL matches its raw offsets too.
+    expect(originalSetEOL).toHaveBeenCalledWith(1);
+
+    rerender(diffTree({ before: "old", after: "new", layout: "unified" }));
+    expect(h.commentOptions.before?.canComment).toBe(false);
+    rerender(diffTree({ before: null, after: "new", layout: "split" }));
+    expect(h.commentOptions.before?.canComment).toBe(false);
   });
 
   it("restores and records the modified side's scroll offset", async () => {
@@ -407,7 +447,7 @@ describe("MonacoDiffViewer", () => {
     // @monaco-editor/react disposes the models before the diff widget, which the
     // bundled Monaco rejects. We take disposal over (keepCurrent*) and tear down
     // in the safe order: detach the widget's model, then dispose both models.
-    const originalModel = { dispose: vi.fn() };
+    const originalModel = { dispose: vi.fn(), setEOL: vi.fn() };
     const modifiedModel = { dispose: vi.fn(), setEOL: vi.fn() };
     const setModel = vi.fn();
     const fakeModified = {
