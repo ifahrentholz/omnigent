@@ -9,8 +9,8 @@ from alembic import command
 
 from omnigent.db.utils import _build_alembic_config
 
-_PREVIOUS_REVISION = "kk1a2b3c4d5e"
-_REVISION = "ll1a2b3c4d5e"
+_PREVIOUS_REVISION = "f01a2b3c4d5e"
+_REVISION = "f02a2b3c4d5e"
 
 
 def _migrate(uri: str, engine: sa.Engine, action: str, revision: str) -> None:

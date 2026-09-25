@@ -9,8 +9,8 @@ from alembic import command
 
 from omnigent.db.utils import _build_alembic_config
 
-_PREVIOUS_REVISION = "jj1a2b3c4d5e"
-_REVISION = "kk1a2b3c4d5e"
+_PREVIOUS_REVISION = "ll1a2b3c4d5e"
+_REVISION = "f01a2b3c4d5e"
 _TABLE = "omnigent_conversation_metadata"
 
 
