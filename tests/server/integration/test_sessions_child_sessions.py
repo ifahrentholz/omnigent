@@ -2037,6 +2037,61 @@ async def test_subagent_message_503s_when_heal_finds_no_live_ancestor(
     assert resp.status_code == 503, resp.text
 
 
+async def test_subagent_message_wakes_the_host_ancestor_runner_when_heal_fails(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    When the runner a child shares with its orchestrator idle-timed out, the
+    message path asks the host-bound ancestor to relaunch it instead of 503ing.
+    """
+    child = await _create_native_child(client, name="msg-wake-ancestor")
+
+    fake_runner = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+        base_url="http://runner",
+    )
+    call_count = 0
+
+    async def _runner_client_stub(
+        _session_id: str,
+        _runner_router: object,
+    ) -> httpx.AsyncClient | None:
+        nonlocal call_count
+        call_count += 1
+        return None if call_count == 1 else fake_runner
+
+    async def _heal_none(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    woken_for: list[str] = []
+
+    async def _wake_spy(child_conv: Any, *_args: Any, **_kwargs: Any) -> httpx.AsyncClient:
+        woken_for.append(child_conv.id)
+        return fake_runner
+
+    async def _no_init(*_a: Any, **_k: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(routes_events_module, "_get_runner_client", _runner_client_stub)
+    monkeypatch.setattr(
+        routes_events_module, "_heal_subagent_runner_binding_via_parent", _heal_none
+    )
+    monkeypatch.setattr(routes_events_module, "_wake_subagent_host_runner", _wake_spy)
+    monkeypatch.setattr(routes_events_module, "_ensure_runner_session_initialized", _no_init)
+
+    resp = await client.post(
+        f"/v1/sessions/{child['id']}/events",
+        json={
+            "type": "message",
+            "data": {"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+        },
+    )
+
+    assert resp.status_code in {200, 202}, resp.text
+    assert woken_for == [child["id"]]
+
+
 async def test_non_subagent_session_not_healed_via_parent(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

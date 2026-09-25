@@ -224,6 +224,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _persist_native_terminal_failure,
     _resolve_elicitation,
     _wait_for_host_bound_runner_client,
+    _wake_subagent_host_runner,
     ensure_runner_connected,
 )
 from omnigent.server.schemas import (
@@ -1930,6 +1931,15 @@ def register_events_routes(
                 _tunnel_registry,
                 conversation_store,
             )
+            if healed_client is None:
+                # The shared runner itself is gone (e.g. idle timeout): the
+                # host-bound ancestor can relaunch it for the child.
+                healed_client = await _wake_subagent_host_runner(
+                    conv,
+                    request.app.state,
+                    conversation_store,
+                    runner_router,
+                )
             if healed_client is not None:
                 runner_client = healed_client
                 conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
