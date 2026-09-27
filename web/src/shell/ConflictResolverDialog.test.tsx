@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { MergeEditorProps } from "./MergeEditor";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type MergeState, useMergeState, useResolveStep } from "@/hooks/useBranchResolve";
@@ -9,6 +10,20 @@ import { ConflictResolverDialog } from "./ConflictResolverDialog";
 vi.mock("@/hooks/useBranchResolve", () => ({
   useMergeState: vi.fn(),
   useResolveStep: vi.fn(),
+}));
+
+// Monaco can't run in jsdom; a textarea stands in for the result editor.
+vi.mock("./MergeEditor", () => ({
+  default: ({ path, value, onChange, oursLabel }: MergeEditorProps) => (
+    <label>
+      {oursLabel}
+      <textarea
+        aria-label={`Result for ${path}`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  ),
 }));
 
 vi.mock("@/hooks/useLandBranch", async (importOriginal) => ({
@@ -91,18 +106,18 @@ describe("ConflictResolverDialog", () => {
     expect(step.mutate).toHaveBeenCalledWith({ action: "start" }, expect.anything());
   });
 
-  it("resolves a hunk by choice and saves the file", () => {
+  it("accepts a side for every hunk and saves the file", async () => {
     mergeState({ conflicts: [readme()] });
     renderDialog();
 
-    expect(screen.getByTestId("conflict-hunk").textContent).toContain("# Demo B");
+    const result = await screen.findByLabelText<HTMLTextAreaElement>("Result for README.md");
+    expect(screen.getByText("Task (omni/b)")).toBeTruthy();
+    expect(result.value).toBe(WORKING);
     expect(screen.getByRole("button", { name: "Mark resolved" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Complete merge" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Keep main" }));
-    const result = screen.getByLabelText<HTMLTextAreaElement>("Result for README.md");
+    fireEvent.click(screen.getByRole("button", { name: "main" }));
     expect(result.value).toBe("intro\n# Demo A\noutro\n");
-    expect(screen.queryByTestId("conflict-hunk")).toBeNull();
 
     fireEvent.change(result, { target: { value: "intro\n# Demo A & B\noutro\n" } });
     fireEvent.click(screen.getByRole("button", { name: "Mark resolved" }));
@@ -111,6 +126,17 @@ describe("ConflictResolverDialog", () => {
       { action: "resolve", path: "README.md", content: "intro\n# Demo A & B\noutro\n" },
       expect.anything(),
     );
+  });
+
+  it("keeps Mark resolved disabled while a marker is left", async () => {
+    mergeState({ conflicts: [readme()] });
+    renderDialog();
+
+    const result = await screen.findByLabelText<HTMLTextAreaElement>("Result for README.md");
+    fireEvent.click(screen.getByRole("button", { name: "Both" }));
+    expect(result.value).toBe("intro\n# Demo B\n# Demo A\noutro\n");
+    expect(screen.getByRole("button", { name: "Mark resolved" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Both" })).toBeDisabled();
   });
 
   it("completes the merge and tells the worker", () => {

@@ -90,9 +90,12 @@ Two conflicting tasks can still both land, one after the other:
   two changes contradict each other and the note does not settle it.
 - **Resolve manually…** resolves the conflicts yourself, while the worker is
   idle: it merges the base into the task branch in the worker's worktree and
-  shows each conflict with the task's and the base's lines side by side.
-  Keep one side, both, or edit the result, then **Complete merge** commits it
-  (and, by default, tells the worker). **Abort merge** restores the worktree.
+  opens each conflicted file in a merge editor: the task's and the base's
+  versions side by side on top, the highlighted result below. Use the
+  **Accept task · Accept main · Accept both** links above each conflict (or
+  **Accept all**), edit the result by hand, then **Mark resolved** the file.
+  **Complete merge** commits it (and, by default, tells the worker).
+  **Abort merge** restores the worktree.
 - **Tell orchestrator** asks foreman which task should land first.
 
 foreman never merges on its own. In the Worktrees view, expand a task and

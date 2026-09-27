@@ -1,13 +1,12 @@
 // Resolve a task's conflicts with its base by hand, in the task's worktree.
 //
 // Start merges the base into the task branch without committing. Each
-// conflicted file then shows its conflict hunks with the task's and the
-// base's lines side by side; a choice rewrites that hunk in the editable
-// result, which is saved (and staged) with "Mark resolved". Complete commits
-// the merge, Abort restores the worktree.
+// conflicted file then opens in a Monaco merge editor (task vs base on top,
+// the editable result below); "Mark resolved" saves and stages the result.
+// Complete commits the merge, Abort restores the worktree.
 
 import { CheckIcon, FileWarningIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -17,13 +16,10 @@ import {
   useResolveStep,
 } from "@/hooks/useBranchResolve";
 import { manualResolutionNotice, useMessageWorker } from "@/hooks/useLandBranch";
-import {
-  type HunkChoice,
-  countConflicts,
-  parseConflicts,
-  resolveHunk,
-} from "@/lib/conflictMarkers";
+import { type HunkChoice, countConflicts, resolveAll } from "@/lib/conflictMarkers";
 import { cn } from "@/lib/utils";
+
+const MergeEditor = lazy(() => import("./MergeEditor"));
 
 interface ConflictResolverDialogProps {
   sessionId: string;
@@ -78,7 +74,12 @@ export function ConflictResolverDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="conflict-resolver"
-        className="flex max-h-[85vh] flex-col gap-3 sm:max-w-5xl"
+        className={cn(
+          "flex flex-col gap-3",
+          current && !current.binary && current.working !== null
+            ? "h-[90vh] sm:max-w-[min(96vw,1600px)]"
+            : "max-h-[85vh] sm:max-w-3xl",
+        )}
       >
         <DialogHeader>
           <DialogTitle>
@@ -142,7 +143,7 @@ export function ConflictResolverDialog({
                 <li className="px-1.5 py-1 text-muted-foreground">No conflicts left.</li>
               )}
             </ul>
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-y-auto">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
               {current && (
                 <FileResolver
                   key={current.path}
@@ -216,17 +217,6 @@ function FileResolver({
   pending: boolean;
   onResolve: (resolution: { content: string } | { side: "ours" | "theirs" }) => void;
 }) {
-  // Keyed by content (plus a counter for identical hunks) so a resolved hunk
-  // drops out without the others remounting under shifted keys.
-  const hunks = useMemo(() => {
-    const seen = new Map<string, number>();
-    return parseConflicts(draft).flatMap((segment) => {
-      if (segment.kind !== "conflict") return [];
-      const n = seen.get(segment.raw) ?? 0;
-      seen.set(segment.raw, n + 1);
-      return [{ hunk: segment, key: `${n}:${segment.raw}` }];
-    });
-  }, [draft]);
   const left = countConflicts(draft);
 
   if (file.binary || file.working === null) {
@@ -258,75 +248,57 @@ function FileResolver({
     );
   }
 
-  const choose = (index: number, choice: HunkChoice) =>
-    onDraftChange(resolveHunk(draft, index, choice));
+  const acceptAll = (choice: HunkChoice) => onDraftChange(resolveAll(draft, choice));
 
   return (
-    <div className="flex flex-col gap-2 text-xs">
-      {hunks.map(({ hunk, key }, index) => (
-        <section key={key} data-testid="conflict-hunk" className="rounded border border-border">
-          <div className="flex items-center gap-1 border-b border-border px-2 py-1">
-            <span className="font-medium">
-              Conflict {index + 1} of {hunks.length}
-            </span>
-            <span className="ml-auto flex gap-1">
-              <button type="button" className={BUTTON} onClick={() => choose(index, "ours")}>
-                Keep task
-              </button>
-              <button type="button" className={BUTTON} onClick={() => choose(index, "theirs")}>
-                Keep {base}
-              </button>
-              <button type="button" className={BUTTON} onClick={() => choose(index, "both")}>
-                Keep both
-              </button>
-            </span>
-          </div>
-          <div className="grid grid-cols-2 divide-x divide-border">
-            <HunkSide label={`Task (${branch})`} text={hunk.ours} />
-            <HunkSide label={`Base (${base})`} text={hunk.theirs} />
-          </div>
-          {hunk.ancestor !== null && (
-            <details className="border-t border-border px-2 py-1">
-              <summary className="cursor-pointer text-muted-foreground">Common ancestor</summary>
-              <pre className="whitespace-pre-wrap font-mono">{hunk.ancestor || "(empty)"}</pre>
-            </details>
-          )}
-        </section>
-      ))}
-      <label className="flex flex-col gap-1">
-        <span className="font-medium">
-          Result for <span className="font-mono">{file.path}</span>
-          {left > 0 && <span className="text-muted-foreground"> · {left} conflict(s) left</span>}
-        </span>
-        <textarea
-          aria-label={`Result for ${file.path}`}
+    <div className="flex min-h-0 flex-1 flex-col gap-2 text-xs">
+      <Suspense fallback={<p className="text-muted-foreground">Loading editor…</p>}>
+        <MergeEditor
+          path={file.path}
+          ours={file.ours ?? ""}
+          theirs={file.theirs ?? ""}
+          oursLabel={`Task (${branch})`}
+          base={base}
           value={draft}
-          onChange={(event) => onDraftChange(event.target.value)}
-          rows={12}
-          spellCheck={false}
-          className="rounded border border-border bg-transparent p-2 font-mono"
+          onChange={onDraftChange}
         />
-      </label>
-      <button
-        type="button"
-        disabled={pending || left > 0}
-        title={left > 0 ? "Resolve every conflict in the result first" : undefined}
-        onClick={() => onResolve({ content: draft })}
-        className={cn(BUTTON, "self-start font-medium")}
-      >
-        Mark resolved
-      </button>
-    </div>
-  );
-}
-
-function HunkSide({ label, text }: { label: string; text: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="px-2 pt-1 text-muted-foreground">{label}</div>
-      <pre className="overflow-x-auto whitespace-pre-wrap px-2 pb-1 font-mono">
-        {text || "(nothing)"}
-      </pre>
+      </Suspense>
+      <div className="flex flex-wrap items-center gap-1">
+        <button
+          type="button"
+          disabled={pending || left > 0}
+          title={left > 0 ? "Resolve every conflict in the result first" : undefined}
+          onClick={() => onResolve({ content: draft })}
+          className={cn(BUTTON, "font-medium")}
+        >
+          Mark resolved
+        </button>
+        <span className="ml-auto text-muted-foreground">Accept all:</span>
+        <button
+          type="button"
+          disabled={left === 0}
+          className={BUTTON}
+          onClick={() => acceptAll("ours")}
+        >
+          Task
+        </button>
+        <button
+          type="button"
+          disabled={left === 0}
+          className={BUTTON}
+          onClick={() => acceptAll("theirs")}
+        >
+          {base}
+        </button>
+        <button
+          type="button"
+          disabled={left === 0}
+          className={BUTTON}
+          onClick={() => acceptAll("both")}
+        >
+          Both
+        </button>
+      </div>
     </div>
   );
 }
