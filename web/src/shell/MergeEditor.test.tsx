@@ -77,6 +77,11 @@ function fakeMonaco() {
   };
   const monaco = {
     Range,
+    Emitter: class {
+      event = () => ({ dispose: () => {} });
+      fire() {}
+      dispose() {}
+    },
     editor: { OverviewRulerLane: { Full: 7 } },
     languages: {
       registerCodeLensProvider: (_selector: string, p: NonNullable<typeof provider>) => {
@@ -90,7 +95,7 @@ function fakeMonaco() {
 
 afterEach(cleanup);
 
-async function renderEditor() {
+async function renderEditor(onChange: (text: string) => void = () => {}, value = WORKING) {
   render(
     <MergeEditor
       path="README.md"
@@ -98,8 +103,8 @@ async function renderEditor() {
       theirs={"intro\n# Demo D\noutro\n"}
       oursLabel="Task (omni/e)"
       base="main"
-      value={WORKING}
-      onChange={() => {}}
+      value={value}
+      onChange={onChange}
     />,
   );
   await screen.findByText("Base (main)");
@@ -117,7 +122,7 @@ describe("MergeEditor", () => {
       modified: "intro\n# Demo D\noutro\n",
     });
     expect(screen.getByText("Task (omni/e)")).toBeTruthy();
-    expect(screen.getByText("· 1 conflict(s) left")).toBeTruthy();
+    expect(screen.getByText(/Pick a side with the links/)).toBeTruthy();
   });
 
   it("offers accept lenses above each hunk and applies the choice in place", async () => {
@@ -163,5 +168,22 @@ describe("MergeEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next conflict" }));
 
     expect(fake.editor.setPosition).toHaveBeenCalledWith({ lineNumber: 2, column: 1 });
+  });
+
+  it("accepts one side for every hunk from the header", async () => {
+    const onChange = vi.fn();
+    await renderEditor(onChange);
+
+    fireEvent.click(screen.getByRole("button", { name: "main" }));
+
+    expect(onChange).toHaveBeenCalledWith("intro\n# Demo D\noutro\n");
+  });
+
+  it("drops the conflict tools once the result is clean", async () => {
+    await renderEditor(() => {}, "intro\n# Demo D\noutro\n");
+
+    expect(screen.getByText(/No conflicts left/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Next conflict" })).toBeNull();
+    expect(screen.queryByText("Accept all:")).toBeNull();
   });
 });

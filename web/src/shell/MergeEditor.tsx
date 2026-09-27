@@ -5,7 +5,7 @@
 // Monaco stays out of the initial bundle.
 
 import { DiffEditor, Editor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { CheckCircle2Icon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useResolvedThemeMode } from "@/components/theme/useResolvedThemeMode";
@@ -14,7 +14,7 @@ import {
   readCodeFont,
   subscribeCodeFont,
 } from "@/lib/codeFontPreferences";
-import { type HunkChoice, conflictRegions, hunkEdit } from "@/lib/conflictMarkers";
+import { type HunkChoice, conflictRegions, hunkEdit, resolveAll } from "@/lib/conflictMarkers";
 import { detectLang } from "./codeViewerHelpers";
 import {
   type monaco,
@@ -175,8 +175,13 @@ export default function MergeEditor({
         editor.addCommand(0, (_accessor: unknown, index: number) => accept(index, choice)),
       );
       const titles = [`Accept task`, `Accept ${base}`, "Accept both"];
+      const lensesChanged = new monacoApi.Emitter<unknown>();
       disposablesRef.current.push(
+        lensesChanged,
         monacoApi.languages.registerCodeLensProvider("*", {
+          // Recompute right after an edit instead of after Monaco's debounce,
+          // so a resolved hunk's lens disappears with it.
+          onDidChange: lensesChanged.event,
           provideCodeLenses: (model: monaco.editor.ITextModel) => {
             if (model !== editor.getModel()) return { lenses: [], dispose: () => {} };
             const lenses = conflictRegions(model.getValue()).flatMap((region, index) =>
@@ -196,8 +201,10 @@ export default function MergeEditor({
         }),
         editor.onDidChangeModelContent(() => {
           decorationsRef.current?.set(conflictDecorations(editor.getValue(), monacoApi));
+          lensesChanged.fire(undefined);
         }),
       );
+      lensesChanged.fire(undefined);
       const first = conflictRegions(editor.getValue())[0];
       if (first) editor.revealLineInCenter(first.hunk.start);
     },
@@ -293,35 +300,64 @@ export default function MergeEditor({
         </div>
       </div>
       <div className="flex min-h-0 flex-[3] flex-col overflow-hidden rounded border border-border">
-        <div className="flex items-center gap-2 border-b border-border px-2 py-1">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-2 py-1">
           <span className="font-medium">
             Result <span className="font-mono">{path}</span>
           </span>
-          <span className="text-muted-foreground">
-            {regions.length === 0 ? "· no conflicts left" : `· ${regions.length} conflict(s) left`}
-          </span>
-          <span className="ml-auto flex gap-1">
-            <button
-              type="button"
-              aria-label="Previous conflict"
-              title="Previous conflict"
-              disabled={regions.length === 0}
-              onClick={() => reveal(-1)}
-              className={BUTTON}
-            >
-              <ChevronUpIcon aria-hidden="true" className="size-3" />
-            </button>
-            <button
-              type="button"
-              aria-label="Next conflict"
-              title="Next conflict"
-              disabled={regions.length === 0}
-              onClick={() => reveal(1)}
-              className={BUTTON}
-            >
-              <ChevronDownIcon aria-hidden="true" className="size-3" />
-            </button>
-          </span>
+          {regions.length === 0 ? (
+            <span className="flex items-center gap-1 text-success">
+              <CheckCircle2Icon aria-hidden="true" className="size-3.5" />
+              No conflicts left. You can still edit the result.
+            </span>
+          ) : (
+            <>
+              <span className="text-muted-foreground">
+                Pick a side with the links above each conflict, or edit the text directly.
+              </span>
+              <span className="ml-auto flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label="Previous conflict"
+                  title="Previous conflict"
+                  onClick={() => reveal(-1)}
+                  className={BUTTON}
+                >
+                  <ChevronUpIcon aria-hidden="true" className="size-3" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Next conflict"
+                  title="Next conflict"
+                  onClick={() => reveal(1)}
+                  className={BUTTON}
+                >
+                  <ChevronDownIcon aria-hidden="true" className="size-3" />
+                </button>
+                <span className="ml-2 text-muted-foreground">Accept all:</span>
+                <button
+                  type="button"
+                  className={BUTTON}
+                  onClick={() => onChange(resolveAll(value, "ours"))}
+                >
+                  Task
+                </button>
+                <button
+                  type="button"
+                  className={BUTTON}
+                  onClick={() => onChange(resolveAll(value, "theirs"))}
+                >
+                  {base}
+                </button>
+                <button
+                  type="button"
+                  className={BUTTON}
+                  onClick={() => onChange(resolveAll(value, "both"))}
+                >
+                  Both
+                </button>
+              </span>
+            </>
+          )}
         </div>
         <div className="min-h-0 flex-1" data-testid="merge-result">
           <Editor

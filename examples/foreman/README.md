@@ -93,9 +93,10 @@ Two conflicting tasks can still both land, one after the other:
   opens each conflicted file in a merge editor: the task's and the base's
   versions side by side on top, the highlighted result below. Use the
   **Accept task · Accept main · Accept both** links above each conflict (or
-  **Accept all**), edit the result by hand, then **Mark resolved** the file.
-  **Complete merge** commits it (and, by default, tells the worker).
-  **Abort merge** restores the worktree.
+  **Accept all**), or edit the result by hand. The file list shows what is
+  left; the footer offers **Next file** and, once nothing is left, **Commit
+  merge**, which saves every file, commits (and, by default, tells the
+  worker). **Abort merge** restores the worktree.
 - **Tell orchestrator** asks foreman which task should land first.
 
 foreman never merges on its own. In the Worktrees view, expand a task and
