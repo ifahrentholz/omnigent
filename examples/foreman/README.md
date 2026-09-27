@@ -81,7 +81,7 @@ covers committed work only. Expand the task to see the conflicting files.
 
 Two conflicting tasks can still both land, one after the other:
 
-- **Land…** one of them. The confirmation offers "Then ask *<other task>* to
+- **Land…** one of them. The confirmation offers "Then ask _<other task>_ to
   update from main" (on by default), which asks each conflicting worker to
   merge `main` into its branch and resolve the conflicts.
 - A task that already conflicts with its base shows **Resolve…**. Add an
@@ -105,5 +105,5 @@ choose one of:
   commit or squashed. Both sides must be clean. A conflicting merge is
   aborted and lists the files.
 - **Ask for PR**: the worker pushes its branch and opens a pull request. Deleting the
-foreman session with "delete branch" also removes every task's worktree and
-branch.
+  foreman session with "delete branch" also removes every task's worktree and
+  branch.

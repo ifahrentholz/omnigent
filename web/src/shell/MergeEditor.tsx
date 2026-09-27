@@ -83,9 +83,7 @@ function conflictDecorations(
       ),
     ),
     ...block(region.ours.start, region.ours.end, "merge-ours", "#2ea04380"),
-    ...(region.ancestor
-      ? block(region.ancestor.start, region.ancestor.end, "merge-ancestor")
-      : []),
+    ...(region.ancestor ? block(region.ancestor.start, region.ancestor.end, "merge-ancestor") : []),
     ...block(region.theirs.start, region.theirs.end, "merge-theirs", "#388bfd80"),
   ]);
 }
@@ -300,9 +298,7 @@ export default function MergeEditor({
             Result <span className="font-mono">{path}</span>
           </span>
           <span className="text-muted-foreground">
-            {regions.length === 0
-              ? "· no conflicts left"
-              : `· ${regions.length} conflict(s) left`}
+            {regions.length === 0 ? "· no conflicts left" : `· ${regions.length} conflict(s) left`}
           </span>
           <span className="ml-auto flex gap-1">
             <button
