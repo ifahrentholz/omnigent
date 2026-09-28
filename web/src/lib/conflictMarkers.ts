@@ -138,3 +138,117 @@ export function resolveHunk(text: string, index: number, choice: HunkChoice): st
     })
     .join("");
 }
+
+/** Resolve every remaining hunk of `text` the same way. */
+export function resolveAll(text: string, choice: HunkChoice): string {
+  return parseConflicts(text)
+    .map((segment) => {
+      if (segment.kind === "text") return segment.text;
+      if (choice === "ours") return segment.ours;
+      if (choice === "theirs") return segment.theirs;
+      return segment.ours + segment.theirs;
+    })
+    .join("");
+}
+
+/** Inclusive 1-based line range; `end < start` means the section is empty. */
+export interface LineRange {
+  start: number;
+  end: number;
+}
+
+/** Where one conflict hunk sits in the file, by line. */
+export interface ConflictRegion {
+  /** The whole hunk, markers included. */
+  hunk: LineRange;
+  ours: LineRange;
+  /** Null for merge-style markers without a common-ancestor section. */
+  ancestor: LineRange | null;
+  theirs: LineRange;
+  /** The marker lines themselves: `<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`. */
+  markers: number[];
+}
+
+function lineCount(text: string): number {
+  if (!text) return 0;
+  const breaks = text.split("\n").length - 1;
+  return text.endsWith("\n") ? breaks : breaks + 1;
+}
+
+/**
+ * Line positions of every conflict hunk, in file order.
+ *
+ * @param text - File content, possibly with conflict markers.
+ * @returns One region per hunk that {@link parseConflicts} recognises.
+ */
+export function conflictRegions(text: string): ConflictRegion[] {
+  const regions: ConflictRegion[] = [];
+  let line = 1;
+  for (const segment of parseConflicts(text)) {
+    if (segment.kind === "text") {
+      line += lineCount(segment.text);
+      continue;
+    }
+    const start = line;
+    const markers = [start];
+    const ours = { start: start + 1, end: start + lineCount(segment.ours) };
+    let next = ours.end + 1;
+    let ancestor: LineRange | null = null;
+    if (segment.ancestor !== null) {
+      markers.push(next);
+      ancestor = { start: next + 1, end: next + lineCount(segment.ancestor) };
+      next = ancestor.end + 1;
+    }
+    markers.push(next);
+    const theirs = { start: next + 1, end: next + lineCount(segment.theirs) };
+    const end = theirs.end + 1;
+    markers.push(end);
+    regions.push({ hunk: { start, end }, ours, ancestor, theirs, markers });
+    line = end + 1;
+  }
+  return regions;
+}
+
+/** A replacement over 1-based line/column positions, as Monaco edits take it. */
+export interface TextEdit {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  text: string;
+}
+
+/**
+ * The edit that resolves hunk `index` in place, touching only its lines so
+ * the rest of the file (and an editor's undo history) is kept.
+ *
+ * @returns The edit, or null for a bad index.
+ */
+export function hunkEdit(text: string, index: number, choice: HunkChoice): TextEdit | null {
+  const region = conflictRegions(text)[index];
+  const hunk = parseConflicts(text).filter((s) => s.kind === "conflict")[index];
+  if (!region || !hunk || hunk.kind !== "conflict") return null;
+  const kept =
+    choice === "ours" ? hunk.ours : choice === "theirs" ? hunk.theirs : hunk.ours + hunk.theirs;
+  const lines = text.split("\n").map((line) => line.replace(/\r$/, ""));
+  const endOf = (line: number) => lines[line - 1].length + 1;
+  const { start, end } = region.hunk;
+  if (kept) {
+    const body = kept.replace(/\r?\n$/, "");
+    return { startLine: start, startColumn: 1, endLine: end, endColumn: endOf(end), text: body };
+  }
+  // Nothing kept: drop the hunk's lines together with one line break.
+  if (end < lines.length) {
+    return { startLine: start, startColumn: 1, endLine: end + 1, endColumn: 1, text: "" };
+  }
+  if (start > 1) {
+    return {
+      startLine: start - 1,
+      startColumn: endOf(start - 1),
+      endLine: end,
+      endColumn: endOf(end),
+      text: "",
+    };
+  }
+  return { startLine: start, startColumn: 1, endLine: end, endColumn: endOf(end), text: "" };
+}

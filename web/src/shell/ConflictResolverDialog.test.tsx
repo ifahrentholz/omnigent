@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { MergeEditorProps } from "./MergeEditor";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type MergeState, useMergeState, useResolveStep } from "@/hooks/useBranchResolve";
@@ -9,6 +10,20 @@ import { ConflictResolverDialog } from "./ConflictResolverDialog";
 vi.mock("@/hooks/useBranchResolve", () => ({
   useMergeState: vi.fn(),
   useResolveStep: vi.fn(),
+}));
+
+// Monaco can't run in jsdom; a textarea stands in for the result editor.
+vi.mock("./MergeEditor", () => ({
+  default: ({ path, value, onChange, oursLabel }: MergeEditorProps) => (
+    <label>
+      {oursLabel}
+      <textarea
+        aria-label={`Result for ${path}`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  ),
 }));
 
 vi.mock("@/hooks/useLandBranch", async (importOriginal) => ({
@@ -53,12 +68,19 @@ function mergeState(state: Partial<MergeState> | null) {
   } as unknown as ReturnType<typeof useMergeState>);
 }
 
-const step = { mutate: vi.fn(), isPending: false, isError: false, error: null };
+const step = {
+  mutate: vi.fn(),
+  mutateAsync: vi.fn(),
+  isPending: false,
+  isError: false,
+  error: null,
+};
 const tell = { mutate: vi.fn() };
 const onOpenChange = vi.fn();
 
 beforeEach(() => {
   step.mutate.mockReset();
+  step.mutateAsync.mockReset();
   tell.mutate.mockReset();
   onOpenChange.mockReset();
   vi.mocked(useResolveStep).mockReturnValue(step as unknown as ReturnType<typeof useResolveStep>);
@@ -81,65 +103,97 @@ function renderDialog() {
   );
 }
 
+const APP = "export const a = 1;\n";
+
+function app() {
+  return readme({
+    path: "src/app.ts",
+    ours: APP,
+    theirs: APP,
+    ancestor: APP,
+    working: "<<<<<<< HEAD\nexport const a = 2;\n=======\nexport const a = 3;\n>>>>>>> main\n",
+  });
+}
+
+async function result(path: string) {
+  return screen.findByLabelText<HTMLTextAreaElement>(`Result for ${path}`);
+}
+
 describe("ConflictResolverDialog", () => {
   it("starts the merge when none is in progress", () => {
     mergeState({ in_progress: false });
     renderDialog();
 
-    fireEvent.click(screen.getByRole("button", { name: "Start merge of main" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start merge" }));
 
     expect(step.mutate).toHaveBeenCalledWith({ action: "start" }, expect.anything());
   });
 
-  it("resolves a hunk by choice and saves the file", () => {
-    mergeState({ conflicts: [readme()] });
+  it("shows progress instead of a dead button while conflicts are left", async () => {
+    mergeState({ conflicts: [readme(), app()] });
     renderDialog();
 
-    expect(screen.getByTestId("conflict-hunk").textContent).toContain("# Demo B");
-    expect(screen.getByRole("button", { name: "Mark resolved" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Complete merge" })).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Keep main" }));
-    const result = screen.getByLabelText<HTMLTextAreaElement>("Result for README.md");
-    expect(result.value).toBe("intro\n# Demo A\noutro\n");
-    expect(screen.queryByTestId("conflict-hunk")).toBeNull();
-
-    fireEvent.change(result, { target: { value: "intro\n# Demo A & B\noutro\n" } });
-    fireEvent.click(screen.getByRole("button", { name: "Mark resolved" }));
-
-    expect(step.mutate).toHaveBeenCalledWith(
-      { action: "resolve", path: "README.md", content: "intro\n# Demo A & B\noutro\n" },
-      expect.anything(),
+    expect((await result("README.md")).value).toBe(WORKING);
+    expect(screen.getByText("Task (omni/b)")).toBeTruthy();
+    expect(screen.getByTestId("merge-progress").textContent).toBe(
+      "1 conflict left in README.md · 2 files to go",
     );
+    expect(
+      screen.queryByRole("button", { name: /Commit merge|Next file|Mark resolved/ }),
+    ).toBeNull();
+    expect(screen.getAllByTestId("file-status").map((el) => el.textContent)).toEqual(["1", "1"]);
   });
 
-  it("completes the merge and tells the worker", () => {
-    mergeState({ conflicts: [] });
+  it("moves on to the next file once the current one is resolved", async () => {
+    mergeState({ conflicts: [readme(), app()] });
     renderDialog();
 
-    fireEvent.click(screen.getByRole("button", { name: "Complete merge" }));
-    const [action, options] = step.mutate.mock.calls[0] as [
-      unknown,
-      { onSuccess: (r: unknown) => void },
-    ];
-    expect(action).toEqual({ action: "complete" });
-    options.onSuccess({ committed: true, commit: "abcdef123", resolved: ["README.md"] });
+    fireEvent.change(await result("README.md"), {
+      target: { value: "intro\n# Demo A\noutro\n" },
+    });
+    expect(screen.getAllByTestId("file-status").map((el) => el.textContent)).toEqual(["done", "1"]);
+    fireEvent.click(screen.getByRole("button", { name: "Next file: src/app.ts" }));
 
+    expect((await result("src/app.ts")).value).toContain("<<<<<<< HEAD");
+    expect(screen.getByTestId("merge-progress").textContent).toBe("1 conflict left in src/app.ts");
+  });
+
+  it("saves every file, commits and tells the worker in one step", async () => {
+    mergeState({ conflicts: [readme(), app()] });
+    step.mutateAsync.mockImplementation((action: { action: string }) =>
+      Promise.resolve(
+        action.action === "complete"
+          ? { committed: true, commit: "abcdef123", resolved: ["README.md", "src/app.ts"] }
+          : { in_progress: true, conflicts: [] },
+      ),
+    );
+    renderDialog();
+
+    fireEvent.change(await result("README.md"), { target: { value: "intro\n# Both\noutro\n" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next file: src/app.ts" }));
+    fireEvent.change(await result("src/app.ts"), { target: { value: "export const a = 3;\n" } });
+    expect(screen.getByTestId("merge-progress").textContent).toBe("All conflicts resolved.");
+    fireEvent.click(screen.getByRole("button", { name: "Commit merge" }));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(step.mutateAsync.mock.calls.map(([action]) => action)).toEqual([
+      { action: "resolve", path: "README.md", content: "intro\n# Both\noutro\n" },
+      { action: "resolve", path: "src/app.ts", content: "export const a = 3;\n" },
+      { action: "complete" },
+    ]);
     const [notice] = tell.mutate.mock.calls[0] as [string];
     expect(notice).toContain("merged `main` into your branch");
     expect(notice).toContain("abcdef1");
-    expect(notice).toContain("README.md");
-    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("skips the worker message when opted out, and aborts on request", () => {
+  it("skips the worker message when opted out, and aborts on request", async () => {
     mergeState({ conflicts: [] });
+    step.mutateAsync.mockResolvedValue({ committed: true, commit: "abc", resolved: [] });
     renderDialog();
 
-    fireEvent.click(screen.getByLabelText("Tell the worker what was resolved"));
-    fireEvent.click(screen.getByRole("button", { name: "Complete merge" }));
-    const [, options] = step.mutate.mock.calls[0] as [unknown, { onSuccess: (r: unknown) => void }];
-    options.onSuccess({ committed: true, commit: "abc", resolved: [] });
+    fireEvent.click(screen.getByLabelText("Tell the worker"));
+    fireEvent.click(screen.getByRole("button", { name: "Commit merge" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(tell.mutate).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Abort merge" }));
@@ -154,6 +208,7 @@ describe("ConflictResolverDialog", () => {
     });
     renderDialog();
 
+    expect(screen.getByTestId("file-status").textContent).toBe("pick a side");
     fireEvent.click(screen.getByRole("button", { name: "Keep task version" }));
 
     expect(step.mutate).toHaveBeenCalledWith(

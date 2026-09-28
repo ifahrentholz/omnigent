@@ -1,0 +1,20 @@
+/* Conflict regions in the merge result, in VS Code's merge-conflict colors:
+   task (current) green, base (incoming) blue, common ancestor grey. */
+.monaco-editor .merge-ours {
+  background: rgb(64 200 174 / 0.2);
+}
+.monaco-editor .merge-theirs {
+  background: rgb(64 166 255 / 0.2);
+}
+.monaco-editor .merge-ancestor {
+  background: rgb(128 128 128 / 0.15);
+}
+.monaco-editor .merge-marker {
+  background: rgb(128 128 128 / 0.3);
+}
+.monaco-editor .merge-marker-ours {
+  background: rgb(64 200 174 / 0.5);
+}
+.monaco-editor .merge-marker-theirs {
+  background: rgb(64 166 255 / 0.5);
+}
