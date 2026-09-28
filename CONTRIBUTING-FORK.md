@@ -14,9 +14,11 @@ with milestones M0–M3 and the `upstream-candidate` label.
 | Branch | Role |
 |---|---|
 | `main` | Pure fast-forward mirror of `upstream/main`. Never commit here. |
-| `fork/next` | Integration branch: every finished fork PR is squash-merged here. |
+| `fork/next` | Integration and default branch: every finished fork PR is squash-merged here. |
 | `feat/<issue>-<slug>` | One short-lived branch per issue. |
 
+`fork/next` is the fork's GitHub default branch, so clones and the repo page
+show the fork's features and `Closes #N` in a merged PR closes the issue.
 Fork PRs target `fork/next`. Dependent work may stack: open the PR against the
 previous feature branch, then retarget it to `fork/next` once that one lands. A
 rebase whose tree is identical to the CI-tested head does not need a new CI run.
