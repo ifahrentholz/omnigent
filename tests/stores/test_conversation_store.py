@@ -3357,14 +3357,16 @@ def test_git_base_branch_follows_git_branch(
     db_uri: str,
 ) -> None:
     """
-    The worktree base is stored on create and rewritten with its branch.
+    The worktree base is stored on create and always follows its branch.
 
-    A rebind to a new branch without a base must not keep the previous
-    branch's base, and a bind without a branch leaves both untouched.
+    Re-binding the same host keeps both; a rebind to a new branch without
+    a base must not keep the previous branch's base; and a host change
+    that clears the branch clears its base too.
     """
     host_id = "3a8753b34a61b09af35a01136d40fad0"
     _register_host(db_uri, host_id)
     conv = conversation_store.create_conversation(
+        host_id=host_id,
         workspace="/w/repo-worktrees/a",
         git_branch="omni/a",
         git_base_branch="main",
@@ -3377,6 +3379,13 @@ def test_git_base_branch_follows_git_branch(
     conversation_store.set_host_id(conv.id, host_id, "/w/repo-worktrees/b", "omni/b")
     rebound = conversation_store.get_conversation(conv.id)
     assert (rebound.git_branch, rebound.git_base_branch) == ("omni/b", None)
+
+    conversation_store.set_host_id(conv.id, host_id, "/w/repo-worktrees/c", "omni/c", "main")
+    other_host = "4b9864c45b72c1ab046b12247e51ebe1"
+    _register_host(db_uri, other_host)
+    conversation_store.set_host_id(conv.id, other_host)
+    moved = conversation_store.get_conversation(conv.id)
+    assert (moved.git_branch, moved.git_base_branch) == (None, None)
 
     conversation_store.clear_host_binding(conv.id)
     assert conversation_store.get_conversation(conv.id).git_base_branch is None
