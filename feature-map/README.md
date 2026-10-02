@@ -153,6 +153,7 @@ map an area, remove it here in the same change.
   `omnigent copilot`
 - Integrations, extensions, and remote sandboxes: `omnigent integration`,
   `omnigent extensions`, `omnigent sandbox`
+- Sub-agent task worktrees: `omnigent worktrees`
 
 **Partly mapped:** embedded authentication covers project writes and supporting
 account-context tests; other resource APIs and real identity-provider journeys
