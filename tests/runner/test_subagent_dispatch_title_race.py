@@ -30,10 +30,11 @@ async def test_concurrent_sends_to_one_title_create_one_child(
     :param monkeypatch: Pytest monkeypatch fixture.
     """
     from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
     from omnigent.runner.tool_dispatch import execute_tool
 
     monkeypatch.setattr(runner_app, "get_session_agent_id", lambda _sid: "ag_parent")
-    monkeypatch.setattr(runner_app, "register_child_session", lambda *a, **k: None)
+    monkeypatch.setattr(subagent_work, "register_child_session", lambda *a, **k: None)
     children: list[dict[str, Any]] = []
     creates: list[dict[str, Any]] = []
 
@@ -85,8 +86,8 @@ async def test_concurrent_sends_to_one_title_create_one_child(
                 )
             )
         finally:
-            runner_app.unregister_subagent_work("conv_race_child")
-            runner_app._session_inboxes_ref.pop("conv_race_parent", None)
+            subagent_work.unregister_subagent_work("conv_race_child")
+            subagent_work._session_inboxes_ref.pop("conv_race_parent", None)
 
     assert len(creates) == 1, "the second send must find the first send's child"
     assert json.loads(outputs[0])["conversation_id"] == "conv_race_child"

@@ -42,7 +42,7 @@ async def _dispatch(spec: Any, title: str) -> tuple[str, int]:
     :param title: Child title for the dispatch.
     :returns: The tool output and the number of child creates.
     """
-    from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
     from omnigent.runner.tool_dispatch import execute_tool
 
     creates: list[dict[str, Any]] = []
@@ -73,7 +73,7 @@ async def _dispatch(spec: Any, title: str) -> tuple[str, int]:
             agent_spec=spec,
             session_inbox=inbox,
         )
-    runner_app._session_inboxes_ref.pop(_PARENT, None)
+    subagent_work._session_inboxes_ref.pop(_PARENT, None)
     return output, len(creates)
 
 
@@ -86,15 +86,16 @@ def running_children(monkeypatch: pytest.MonkeyPatch) -> Any:
     :returns: A ``register(n)`` helper returning the child ids.
     """
     from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
 
     monkeypatch.setattr(runner_app, "get_session_agent_id", lambda _sid: "ag_parent")
-    monkeypatch.setattr(runner_app, "register_child_session", lambda *a, **k: None)
+    monkeypatch.setattr(subagent_work, "register_child_session", lambda *a, **k: None)
     registered: list[str] = []
 
     def _register(count: int) -> list[str]:
         for index in range(count):
             child = f"conv_cap_running_{index}"
-            runner_app.register_subagent_work(
+            subagent_work.register_subagent_work(
                 parent_session_id=_PARENT,
                 child_session_id=child,
                 agent="worker",
@@ -105,7 +106,7 @@ def running_children(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     yield _register
     for child in [*registered, "conv_cap_new", "conv_cap_extra"]:
-        runner_app.unregister_subagent_work(child)
+        subagent_work.unregister_subagent_work(child)
 
 
 @pytest.mark.asyncio
@@ -129,10 +130,10 @@ async def test_finished_dispatches_free_their_slot(running_children: Any) -> Non
 
     :param running_children: Fixture registering unfinished dispatches.
     """
-    from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
 
     children = running_children(2)
-    runner_app.mark_subagent_work_terminal(children[0], status="completed", output="done")
+    subagent_work.mark_subagent_work_terminal(children[0], status="completed", output="done")
     output, creates = await _dispatch(_spec(2), "new")
     assert json.loads(output)["status"] == "launching", output
     assert creates == 1
@@ -185,7 +186,7 @@ async def test_parallel_dispatches_cannot_overshoot_the_cap(running_children: An
 
     :param running_children: Fixture registering unfinished dispatches.
     """
-    from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
     from omnigent.runner.tool_dispatch import execute_tool
 
     running_children(0)
@@ -227,8 +228,8 @@ async def test_parallel_dispatches_cannot_overshoot_the_cap(running_children: An
             )
         finally:
             for index in range(1, 5):
-                runner_app.unregister_subagent_work(f"conv_par_{index}")
-            runner_app._session_inboxes_ref.pop(_PARENT, None)
+                subagent_work.unregister_subagent_work(f"conv_par_{index}")
+            subagent_work._session_inboxes_ref.pop(_PARENT, None)
 
     assert len(creates) == 2, outputs
     assert (
@@ -248,7 +249,7 @@ async def test_resend_by_session_id_respects_the_cap(running_children: Any) -> N
 
     :param running_children: Fixture registering unfinished dispatches.
     """
-    from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
     from omnigent.runner.tool_dispatch import execute_tool
 
     running_children(1)
@@ -264,7 +265,7 @@ async def test_resend_by_session_id_respects_the_cap(running_children: Any) -> N
             agent_spec=_spec(1),
             session_inbox=inbox,
         )
-    runner_app._session_inboxes_ref.pop(_PARENT, None)
+    subagent_work._session_inboxes_ref.pop(_PARENT, None)
     assert output.startswith("Error: 1 sub-agents are already running"), output
 
 
@@ -276,10 +277,10 @@ async def test_recovered_waiting_work_does_not_hold_slots(running_children: Any)
 
     :param running_children: Fixture registering unfinished dispatches.
     """
-    from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
 
     for child in running_children(2):
-        runner_app.get_subagent_work(child).status = "waiting"
+        subagent_work.get_subagent_work(child).status = "waiting"
     output, creates = await _dispatch(_spec(2), "new")
     assert json.loads(output)["status"] == "launching", output
     assert creates == 1

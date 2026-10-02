@@ -38,14 +38,13 @@ def claim_slot(
     :returns: ``None`` when the slot was claimed, else an ``"Error: ..."``
         message for the orchestrator.
     """
-    # Lazy: the runner app imports the dispatch module that imports this one.
-    from omnigent.runner import app as _runner_app
+    from omnigent.runner.subagent_work import list_subagent_work
     from omnigent.tools.builtins.web_fetch import RESEARCHER_NAME
 
     claimed = _claims.setdefault(parent_session_id, set())
     running = sum(
         1
-        for entry in _runner_app.list_subagent_work(parent_session_id)
+        for entry in list_subagent_work(parent_session_id)
         if entry.status in _COUNTED_STATUSES
         and entry.child_session_id != exclude_child
         and entry.work_id not in claimed

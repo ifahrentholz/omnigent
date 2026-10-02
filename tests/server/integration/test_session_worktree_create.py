@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from omnigent.host.frames import (
     HostCreateWorktreeFrame,
     HostHelloFrame,
+    HostListWorktreesFrame,
     HostRemoveWorktreeFrame,
     HostStatFrame,
     decode_host_frame,
@@ -156,6 +157,28 @@ async def register_worktree_host(
                                     "error": create_error,
                                 }
                             )
+                elif isinstance(frame, HostListWorktreesFrame):
+                    # A real host lists the main checkout plus every linked
+                    # worktree; deletes check this before removing one.
+                    fut = conn.pending_list_worktrees.pop(frame.request_id, None)
+                    if fut is not None and not fut.done():
+                        linked = [
+                            {
+                                "path": f"{_SOURCE_REPO}-worktrees/"
+                                + c.branch_name.replace("/", "-"),
+                                "branch": c.branch_name,
+                                "is_main": False,
+                                "detached": False,
+                            }
+                            for c in cap.create
+                        ]
+                        main = {
+                            "path": _SOURCE_REPO,
+                            "branch": "main",
+                            "is_main": True,
+                            "detached": False,
+                        }
+                        fut.set_result({"status": "ok", "worktrees": [main, *linked]})
                 elif isinstance(frame, HostRemoveWorktreeFrame):
                     cap.remove.append(frame)
                     fut = conn.pending_remove_worktrees.pop(frame.request_id, None)

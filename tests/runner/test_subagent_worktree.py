@@ -284,10 +284,11 @@ async def _send(
     :returns: The parsed tool result and the captured create bodies.
     """
     from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
     from omnigent.runner.tool_dispatch import execute_tool
 
     monkeypatch.setattr(runner_app, "get_session_agent_id", lambda _sid: "ag_parent")
-    monkeypatch.setattr(runner_app, "register_child_session", lambda *a, **k: None)
+    monkeypatch.setattr(subagent_work, "register_child_session", lambda *a, **k: None)
     bodies: list[dict[str, Any]] = []
     created = {"id": "conv_child"}
     if (
@@ -307,8 +308,8 @@ async def _send(
                 session_inbox=inbox,
             )
         finally:
-            runner_app.unregister_subagent_work("conv_child")
-            runner_app._session_inboxes_ref.pop("conv_parent", None)
+            subagent_work.unregister_subagent_work("conv_child")
+            subagent_work._session_inboxes_ref.pop("conv_parent", None)
     try:
         return json.loads(output), bodies
     except json.JSONDecodeError:
@@ -487,10 +488,11 @@ async def _send_with_create_handler(
     :returns: The raw tool output and every create body sent.
     """
     from omnigent.runner import app as runner_app
+    from omnigent.runner import subagent_work
     from omnigent.runner.tool_dispatch import execute_tool
 
     monkeypatch.setattr(runner_app, "get_session_agent_id", lambda _sid: "ag_parent")
-    monkeypatch.setattr(runner_app, "register_child_session", lambda *a, **k: None)
+    monkeypatch.setattr(subagent_work, "register_child_session", lambda *a, **k: None)
     bodies: list[dict[str, Any]] = []
 
     async def _handler(request: httpx.Request) -> httpx.Response:
@@ -522,8 +524,8 @@ async def _send_with_create_handler(
                 session_inbox=inbox,
             )
         finally:
-            runner_app.unregister_subagent_work("conv_child")
-            runner_app._session_inboxes_ref.pop("conv_parent", None)
+            subagent_work.unregister_subagent_work("conv_child")
+            subagent_work._session_inboxes_ref.pop("conv_parent", None)
     return output, bodies
 
 
