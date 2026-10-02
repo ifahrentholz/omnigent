@@ -1,13 +1,13 @@
 # Working on this fork
 
-This fork (`ifahrentholz/omnigent`) develops **multitask orchestration**:
-parallel sub-agent tasks in their own git worktrees, a review UI per worktree,
-and a path back into the orchestrator. Finished pieces are proposed upstream to
-[`omnigent-ai/omnigent`](https://github.com/omnigent-ai/omnigent), one issue per
-PR. This file is fork-only and never goes upstream.
+This fork (`ifahrentholz/omnigent`) is its own version of Omnigent, built
+around **multitask orchestration**: parallel sub-agent tasks in their own git
+worktrees, a review UI per worktree, and a path back into the orchestrator.
+It pulls in [`omnigent-ai/omnigent`](https://github.com/omnigent-ai/omnigent)
+regularly but does not send changes back: there are no upstream PRs.
 
-The backlog is the [epic](https://github.com/ifahrentholz/omnigent/issues/18),
-with milestones M0–M3 and the `upstream-candidate` label.
+The backlog lives in this fork's issues; the first milestones (M0–M3) are
+tracked in the [multitask epic](https://github.com/ifahrentholz/omnigent/issues/18).
 
 ## Branches
 
@@ -78,28 +78,11 @@ uv run --no-sync pytest tests/e2e/test_subagent_worktree_e2e.py   # mock LLM, no
 - **Cancelled runs** after a force-push show up as failed checks with
   unexpanded `${{ matrix.* }}` names. The newer run on the same head counts.
 
-## Going upstream
-
-Upstream requires an **upstream issue** for every PR (`Closes
-omnigent-ai/omnigent#…`); fork issues don't count. Migrations (e.g. #3) need
-code-owner approval there. Suggested order, each as its own PR cherry-picked
-from its `fork/next` squash commit onto `upstream/main`:
-
-1. #2 worktree per sub-agent, then #3 base branch, #6 title race, #7 running cap
-2. #4 child summary fields, #8 branch-diff endpoints, #25 file-panel root
-3. #9 branch baseline UI, #10 Worktrees view, #11 comments to orchestrator
-4. #5 worktree setup + cascade cleanup, #14 land a branch, #13 foreman example
-
-Before the first one, ask upstream (Discord or an issue) whether sub-agent
-worktree isolation is already in flight. The code references design docs such
-as `designs/SESSION_GIT_WORKTREE.md` and `designs/STEERABLE_SUBAGENTS.md` that
-are not public.
-
 ## Fork CI
 
 Pushes and PRs run the full upstream workflow set, about 111 workflows. Public
 repositories run on free runners, but the queue gets long with stacked PRs. To
-trim it, disable workflows that only make sense upstream under
+trim it, disable workflows that only make sense for the original project under
 **Settings → Actions → Workflows**, for example release, docs-sync, triage and
 bot workflows. Do that in the UI, not by editing workflow files, so the fork has
 no diff against upstream there.
