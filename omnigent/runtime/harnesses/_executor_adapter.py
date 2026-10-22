@@ -26,6 +26,7 @@ from omnigent.errors import ElicitationDeclinedError, ErrorPhase
 from omnigent.inner.executor import (
     CompactionComplete,
     CompactionStarted,
+    RateLimitChanged,
     Executor,
     ExecutorConfig,
     ExecutorError,
@@ -917,6 +918,19 @@ class ExecutorAdapter(HarnessApp):
             # Capture provider-reported usage for the response.completed payload.
             if event.usage is not None:
                 ctx.provider_usage = event.usage
+        elif isinstance(event, RateLimitChanged):
+            from omnigent.server.schemas import SessionRateLimitEvent
+
+            ctx.emit(
+                SessionRateLimitEvent(
+                    type="session.rate_limit",
+                    conversation_id=ctx.session_id,
+                    status=event.status,
+                    rate_limit_type=event.rate_limit_type,
+                    utilization=event.utilization,
+                    resets_at=event.resets_at,
+                )
+            )
         elif isinstance(event, CompactionStarted):
             from omnigent.server.schemas import CompactionInProgressEvent
 

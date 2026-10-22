@@ -4939,6 +4939,7 @@
             "session.model_options": "#/components/schemas/SessionModelOptionsEvent",
             "session.permission_mode": "#/components/schemas/SessionPermissionModeEvent",
             "session.presence": "#/components/schemas/SessionPresenceEvent",
+            "session.rate_limit": "#/components/schemas/SessionRateLimitEvent",
             "session.reasoning_effort": "#/components/schemas/SessionReasoningEffortEvent",
             "session.resource.created": "#/components/schemas/SessionResourceCreatedEvent",
             "session.resource.deleted": "#/components/schemas/SessionResourceDeletedEvent",
@@ -4966,6 +4967,9 @@
           },
           {
             "$ref": "#/components/schemas/SessionModelEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SessionRateLimitEvent"
           },
           {
             "$ref": "#/components/schemas/SessionTitleEvent"
@@ -6434,6 +6438,95 @@
           "name"
         ],
         "title": "SessionProjectSummary",
+        "type": "object"
+      },
+      "SessionRateLimitEvent": {
+        "description": "Subscription rate-limit state reported by a harness.\n\nEmitted when Claude's CLI reports a transition of its rate-limit state\n(`rate_limit_event`), e.g. `allowed` \u2192 `allowed_warning` as a\nwindow nears its limit. The server also persists the latest state as\nthe conversation labels `omnigent.rate_limit_*` so a snapshot carries\nit after a reload.",
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Session identifier, e.g. `\"conv_abc123\"`.",
+            "title": "Conversation Id"
+          },
+          "rate_limit_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The window, e.g. `\"five_hour\"`.",
+            "title": "Rate Limit Type"
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Unix timestamp (seconds) when the window resets. Category: **transient** (SSE-only); durable as labels.",
+            "title": "Resets At"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "status": {
+            "description": "`\"allowed\"`, `\"allowed_warning\"` or `\"rejected\"`.",
+            "title": "Status",
+            "type": "string"
+          },
+          "type": {
+            "const": "session.rate_limit",
+            "description": "Always `\"session.rate_limit\"`.",
+            "title": "Type",
+            "type": "string"
+          },
+          "utilization": {
+            "anyOf": [
+              {
+                "format": "double",
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Fraction of the window used, e.g. `0.92`.",
+            "title": "Utilization"
+          }
+        },
+        "required": [
+          "type",
+          "status"
+        ],
+        "title": "SessionRateLimitEvent",
         "type": "object"
       },
       "SessionReasoningEffortEvent": {

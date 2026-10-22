@@ -229,6 +229,27 @@ class ToolCallComplete(ExecutorEvent):
 
 
 @dataclass
+class RateLimitChanged(ExecutorEvent):
+    """The provider's subscription rate-limit state changed (Claude's ``rate_limit_event``).
+
+    Emitted when the CLI reports a transition, e.g. from ``allowed`` to
+    ``allowed_warning`` as a window nears its limit. Lets an orchestrator keep
+    new work away from a subscription before it is exhausted, rather than only
+    learning of it from a ``rate_limit_exceeded`` failure.
+
+    :param status: ``"allowed"``, ``"allowed_warning"`` or ``"rejected"``.
+    :param rate_limit_type: The window, e.g. ``"five_hour"`` or ``"seven_day"``.
+    :param utilization: Fraction of the window used, e.g. ``0.92``.
+    :param resets_at: Unix timestamp (seconds) when the window resets.
+    """
+
+    status: str
+    rate_limit_type: str | None = None
+    utilization: float | None = None
+    resets_at: int | None = None
+
+
+@dataclass
 class CompactionStarted(ExecutorEvent):
     """The harness detected that compaction is about to begin.
 
