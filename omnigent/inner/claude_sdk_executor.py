@@ -354,6 +354,37 @@ class _ClaudeSDK(Protocol):
     ToolResultBlock: type
 
 
+def _rate_limit_changed(sdk: object, message: object) -> ExecutorEvent | None:
+    """
+    Map the SDK's ``RateLimitEvent`` to :class:`RateLimitChanged`.
+
+    SDK builds without the class (and test doubles) yield ``None``, so the
+    message loop falls through to its other branches unchanged.
+
+    :param sdk: The imported ``claude_agent_sdk`` module (or a test double).
+    :param message: One message from the SDK's response stream.
+    :returns: The executor event, or ``None`` when ``message`` is no rate-limit event.
+    """
+    cls = getattr(sdk, "RateLimitEvent", None)
+    if not isinstance(cls, type) or not isinstance(message, cls):
+        return None
+    info = getattr(message, "rate_limit_info", None)
+    status = getattr(info, "status", None)
+    if not isinstance(status, str):
+        return None
+    from omnigent.inner.executor import RateLimitChanged
+
+    utilization = getattr(info, "utilization", None)
+    resets_at = getattr(info, "resets_at", None)
+    rate_limit_type = getattr(info, "rate_limit_type", None)
+    return RateLimitChanged(
+        status=status,
+        rate_limit_type=rate_limit_type if isinstance(rate_limit_type, str) else None,
+        utilization=float(utilization) if isinstance(utilization, (int, float)) else None,
+        resets_at=int(resets_at) if isinstance(resets_at, (int, float)) else None,
+    )
+
+
 _CONNECT_TIMEOUT_SECONDS = 60.0
 _QUERY_START_TIMEOUT_SECONDS = 30.0
 # When the response stream is quiet for this long we emit a warning,
@@ -3239,6 +3270,8 @@ class ClaudeSDKExecutor(Executor):
                                 "model": observed_model or model,
                             }
 
+                    elif (rate_limit := _rate_limit_changed(sdk, message)) is not None:
+                        yield rate_limit
                     elif isinstance(message, sdk.SystemMessage):
                         system_msg = cast(_SystemMessageObj, message)
                         subtype = system_msg.subtype

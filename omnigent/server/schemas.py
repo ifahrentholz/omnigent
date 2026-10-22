@@ -3396,6 +3396,34 @@ class SessionModelEvent(_SSEEventBase):
     model: str
 
 
+class SessionRateLimitEvent(_SSEEventBase):
+    """
+    Subscription rate-limit state reported by a harness.
+
+    Emitted when Claude's CLI reports a transition of its rate-limit state
+    (``rate_limit_event``), e.g. ``allowed`` → ``allowed_warning`` as a
+    window nears its limit. The server also persists the latest state as
+    the conversation labels ``omnigent.rate_limit_*`` so a snapshot carries
+    it after a reload.
+
+    :param type: Always ``"session.rate_limit"``.
+    :param conversation_id: Session identifier, e.g. ``"conv_abc123"``.
+    :param status: ``"allowed"``, ``"allowed_warning"`` or ``"rejected"``.
+    :param rate_limit_type: The window, e.g. ``"five_hour"``.
+    :param utilization: Fraction of the window used, e.g. ``0.92``.
+    :param resets_at: Unix timestamp (seconds) when the window resets.
+
+    Category: **transient** (SSE-only); durable as labels.
+    """
+
+    type: Literal["session.rate_limit"]
+    conversation_id: str | None = None
+    status: str
+    rate_limit_type: str | None = None
+    utilization: float | None = None
+    resets_at: int | None = None
+
+
 class SessionTitleEvent(_SSEEventBase):
     """
     Session-title update from a terminal-backed integration.
@@ -4930,6 +4958,7 @@ ServerStreamEvent = Annotated[
     SessionStatusEvent
     | SessionUsageEvent
     | SessionModelEvent
+    | SessionRateLimitEvent
     | SessionTitleEvent
     | SessionReasoningEffortEvent
     | SessionCollaborationModeEvent
