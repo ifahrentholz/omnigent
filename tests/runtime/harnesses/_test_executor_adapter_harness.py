@@ -12,6 +12,7 @@ Four scripts:
   with a result, then a TurnComplete (no further text).
 - ``"error"``: an ExecutorError event.
 - ``"cancelled"``: a TurnCancelled event.
+- ``"rate_limit"``: a RateLimitChanged, then a TurnComplete.
 - ``"capture_messages"``: writes the received messages list as
   JSON to the path in ``MOCK_EXECUTOR_CAPTURE_PATH``, then
   emits a TurnComplete. Used to verify the full AP→harness→
@@ -36,6 +37,7 @@ from omnigent.inner.executor import (
     ExecutorEvent,
     Message,
     MockExecutor,
+    RateLimitChanged,
     ToolCallComplete,
     ToolCallRequest,
     ToolCallStatus,
@@ -249,6 +251,30 @@ def _build_pr_tracking() -> Executor:
     return executor
 
 
+def _build_rate_limit() -> Executor:
+    """
+    MockExecutor scripted with Claude's warning before a subscription limit.
+
+    Yields a :class:`RateLimitChanged` (as the claude-sdk executor does for the
+    SDK's ``RateLimitEvent``), then a :class:`TurnComplete`.
+
+    :returns: A configured :class:`MockExecutor` instance.
+    """
+    executor = MockExecutor()
+    executor._turns.append(
+        [
+            RateLimitChanged(
+                status="allowed_warning",
+                rate_limit_type="five_hour",
+                utilization=0.92,
+                resets_at=1792700000,
+            ),
+            TurnComplete(response="done"),
+        ]
+    )
+    return executor
+
+
 def _build_provider_auth_failure() -> Executor:
     return _ProviderAuthFailureExecutor()
 
@@ -262,6 +288,7 @@ _SCRIPTS: dict[str, Callable[[], Executor]] = {
     "cancelled": _build_cancelled,
     "capture_messages": _build_capture_messages,
     "provider_auth_failure": _build_provider_auth_failure,
+    "rate_limit": _build_rate_limit,
 }
 
 

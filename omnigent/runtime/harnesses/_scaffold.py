@@ -73,6 +73,7 @@ from omnigent.server.schemas import (
     RetryErrorDetail,
     RetryEvent,
     ServerStreamEvent,
+    SessionRateLimitEvent,
     Usage,
 )
 
@@ -534,7 +535,7 @@ class TurnContext:
         # the idle window open then — via the idle-only hook, so the
         # absolute ceiling stays the hard cap even for an ignored approval.
         if not isinstance(event, HeartbeatEvent):
-            if not isinstance(event, RetryEvent) and not (
+            if not isinstance(event, (RetryEvent, SessionRateLimitEvent)) and not (
                 isinstance(event, PolicyEvaluationRequestEvent)
                 and event.phase == "PHASE_LLM_REQUEST"
             ):

@@ -143,6 +143,12 @@ def use_text_only(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def use_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MockExecutor that reports a rate-limit warning, then completes."""
+    monkeypatch.setenv("MOCK_EXECUTOR_SCRIPT", "rate_limit")
+
+
+@pytest.fixture
 def use_tool_call(monkeypatch: pytest.MonkeyPatch) -> None:
     """MockExecutor that yields a tool-call observation then completes."""
     monkeypatch.setenv("MOCK_EXECUTOR_SCRIPT", "tool_call")
@@ -2982,3 +2988,52 @@ async def test_subprocess_tracking_uses_validated_session_without_telemetry(
     assert [pr.url for pr in SessionPrRegistry(conv_id).list()] == [
         "https://github.com/example/sdk/pull/42"
     ]
+
+
+async def test_rate_limit_change_streams_as_session_rate_limit(
+    use_rate_limit: None,
+    manager: HarnessProcessManager,
+) -> None:
+    """A RateLimitChanged from the inner executor → ``session.rate_limit`` on the stream.
+
+    The runner relays it to the server, which keeps it as session labels, so an
+    orchestrator sees Claude's warning before a subscription limit instead of only
+    the ``rate_limit_exceeded`` failure once it is reached.
+    """
+    conv_id = "conv_rate_limit"
+    client = await manager.get_client(conv_id, _TEST_HARNESS_NAME)
+    events: list[_ParsedSSEEvent] = []
+    async with client.stream(
+        "POST", f"/v1/sessions/{conv_id}/events", json=_start_turn_body()
+    ) as response:
+        async for event in _stream_iter(response):
+            events.append(event)
+    rate_limit = [e for e in events if e.event == "session.rate_limit"]
+    assert len(rate_limit) == 1
+    assert rate_limit[0].data["status"] == "allowed_warning"
+    assert rate_limit[0].data["rate_limit_type"] == "five_hour"
+    assert rate_limit[0].data["utilization"] == 0.92
+    assert rate_limit[0].data["resets_at"] == 1792700000
+    assert events[-1].event == "response.completed"
+
+
+async def test_rate_limit_change_is_no_turn_progress() -> None:
+    """A rate-limit report is no output: a crashed turn stays replayable."""
+    import asyncio
+
+    from omnigent.inner.executor import RateLimitChanged
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+    from omnigent.runtime.harnesses._scaffold import TurnContext
+    from omnigent.server.schemas import SessionRateLimitEvent
+
+    adapter = ExecutorAdapter.__new__(ExecutorAdapter)
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    ctx = TurnContext("resp_1", queue, asyncio.Event(), session_id="conv_1")
+    adapter._translate_event(
+        RateLimitChanged(status="allowed_warning", rate_limit_type="seven_day", utilization=0.9),
+        ctx,
+    )
+    emitted = queue.get_nowait()
+    assert isinstance(emitted, SessionRateLimitEvent)
+    assert emitted.conversation_id == "conv_1"
+    assert ctx._has_progress is False

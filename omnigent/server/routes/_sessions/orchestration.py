@@ -8993,6 +8993,12 @@ async def _relay_runner_stream_once(
                     except json.JSONDecodeError:
                         continue
                     evt_type = event.get("type", "")
+                    # A harness's subscription rate-limit state: kept as labels
+                    # (the SSE edge is gone on reload), then forwarded as is.
+                    if evt_type == "session.rate_limit":
+                        from omnigent.server.rate_limit_labels import persist_rate_limit_labels
+
+                        await persist_rate_limit_labels(session_id, event, conversation_store)
                     # The runner emits session.status events
                     # directly.
                     # Re-publish via _publish_status so the event
