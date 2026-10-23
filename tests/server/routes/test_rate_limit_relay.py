@@ -52,7 +52,10 @@ def test_executor_maps_the_sdk_rate_limit_event() -> None:
         _Sdk, _RateLimitEvent(_Info("allowed_warning", "five_hour", 0.92, 1792700000))
     )
     assert event == RateLimitChanged(
-        status="allowed_warning", rate_limit_type="five_hour", utilization=0.92, resets_at=1792700000
+        status="allowed_warning",
+        rate_limit_type="five_hour",
+        utilization=0.92,
+        resets_at=1792700000,
     )
     assert _rate_limit_changed(_Sdk, object()) is None, "other messages fall through"
     assert _rate_limit_changed(object(), _RateLimitEvent(_Info("allowed"))) is None, (
@@ -84,7 +87,12 @@ async def test_adapter_emits_session_rate_limit_without_marking_progress() -> No
 
 def test_label_updates_clear_absent_fields_and_skip_unknown_status() -> None:
     assert rate_limit_label_updates(
-        {"status": "allowed_warning", "rate_limit_type": "five_hour", "utilization": 0.92, "resets_at": 1792700000}
+        {
+            "status": "allowed_warning",
+            "rate_limit_type": "five_hour",
+            "utilization": 0.92,
+            "resets_at": 1792700000,
+        }
     ) == {
         RATE_LIMIT_STATUS_LABEL: "allowed_warning",
         RATE_LIMIT_TYPE_LABEL: "five_hour",
@@ -112,13 +120,15 @@ async def test_a_store_failure_does_not_break_the_relay() -> None:
 async def test_relay_persists_the_rate_limit_state_as_labels() -> None:
     body = (
         'data: {"type":"session.heartbeat"}\n\n'
-        'data: {"type":"session.rate_limit","conversation_id":"conv_rl","status":"allowed_warning",'
-        '"rate_limit_type":"five_hour","utilization":0.95,"resets_at":1792700000}\n\n'
+        'data: {"type":"session.rate_limit","conversation_id":"conv_rl",'
+        '"status":"allowed_warning","rate_limit_type":"five_hour",'
+        '"utilization":0.95,"resets_at":1792700000}\n\n'
         "data: [DONE]\n\n"
     )
     store = Mock(spec=ConversationStore)
     async with httpx.AsyncClient(
-        base_url="http://runner", transport=httpx.MockTransport(lambda _: httpx.Response(200, text=body))
+        base_url="http://runner",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, text=body)),
     ) as client:
         await orchestration._relay_runner_stream_once("conv_rl", client, store)
     store.set_labels.assert_called_once_with(
@@ -137,10 +147,18 @@ def test_executor_maps_the_real_sdk_class() -> None:
     if not hasattr(sdk, "RateLimitEvent"):
         pytest.skip("this claude_agent_sdk has no RateLimitEvent")
     message = sdk.RateLimitEvent(
-        rate_limit_info=sdk.RateLimitInfo(status="allowed_warning", resets_at=1792700000, rate_limit_type="five_hour", utilization=0.93),
+        rate_limit_info=sdk.RateLimitInfo(
+            status="allowed_warning",
+            resets_at=1792700000,
+            rate_limit_type="five_hour",
+            utilization=0.93,
+        ),
         uuid="u1",
         session_id="s1",
     )
     assert _rate_limit_changed(sdk, message) == RateLimitChanged(
-        status="allowed_warning", rate_limit_type="five_hour", utilization=0.93, resets_at=1792700000
+        status="allowed_warning",
+        rate_limit_type="five_hour",
+        utilization=0.93,
+        resets_at=1792700000,
     )
