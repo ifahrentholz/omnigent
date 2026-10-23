@@ -28,12 +28,12 @@ from omnigent.errors import ElicitationDeclinedError, ErrorPhase
 from omnigent.inner.executor import (
     CompactionComplete,
     CompactionStarted,
-    RateLimitChanged,
     Executor,
     ExecutorConfig,
     ExecutorError,
     ExecutorEvent,
     Message,
+    RateLimitChanged,
     ReasoningChunk,
     SubAgentCompleted,
     SubAgentStarted,

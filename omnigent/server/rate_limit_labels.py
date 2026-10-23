@@ -75,7 +75,7 @@ async def persist_rate_limit_labels(
         return
     try:
         await asyncio.to_thread(conversation_store.set_labels, session_id, updates)
-    except Exception:  # noqa: BLE001 — best effort, the live event still goes out
+    except Exception:
         _logger.exception(
             "Failed to persist rate-limit labels for %s",
             session_id,
